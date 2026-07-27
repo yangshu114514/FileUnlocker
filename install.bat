@@ -5,7 +5,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 :: ============ 配置 ============
 set "INSTALL_DIR=C:\Program Files\FileUnlocker"
 set "REPO_URL=https://github.com/ksyangshu/FileUnlocker"
-set "PWSH_URL=https://mirror.ghproxy.com/https://github.com/PowerShell/PowerShell/releases/download/v7.5.0/PowerShell-7.5.0-win-x64.msi"
+set "PWSH_URL=https://github.com/PowerShell/PowerShell/releases/download/v7.5.0/PowerShell-7.5.0-win-x64.msi"
 set "HANDLE_URL1=https://download.sysinternals.com/files/Handle.zip"
 set "HANDLE_URL2=https://mirror.ghproxy.com/https://download.sysinternals.com/files/Handle.zip"
 set "LOG=%TEMP%\FileUnlocker_install.log"

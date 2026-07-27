@@ -66,15 +66,15 @@ FileUnlocker/
   winget install Microsoft.PowerShell
   # 方式二：GitHub 官方（国内慢可用下方镜像中转）
   # https://github.com/PowerShell/PowerShell/releases
-  # 方式三：ghproxy 镜像中转下载 MSI
+  # 方式三：ghproxy 镜像中转下载 MSI（可能因网络环境不可达，失败请用方式一/二）
   # https://mirror.ghproxy.com/https://github.com/PowerShell/PowerShell/releases/download/v7.5.0/PowerShell-7.5.0-win-x64.msi
   ```
 - 管理员权限（终止进程需要）
 
 ## 国内用户注意事项
 
-- **handle.exe 下载**：安装脚本默认从 Sysinternals 官方源下载，国内可能缓慢或失败。脚本已内置镜像回退（ghproxy），若仍失败，可手动下载 `Handle.zip` 解压出 `handle.exe` 放到安装目录 `C:\Program Files\FileUnlocker\` 后重跑安装。
-  - 手动下载镜像：`https://mirror.ghproxy.com/https://download.sysinternals.com/files/Handle.zip`
+- **handle.exe 下载**：安装脚本默认从 Sysinternals 官方源下载，失败回退 ghproxy 镜像。若均不可达（ghproxy 可能因网络环境无法解析），可手动下载 `Handle.zip` 解压出 `handle.exe` 放到安装目录 `C:\Program Files\FileUnlocker\` 后重跑安装。
+  - 手动下载：`https://download.sysinternals.com/files/Handle.zip` 或 `https://mirror.ghproxy.com/https://download.sysinternals.com/files/Handle.zip`
 - **PowerShell 7 安装源**：见上方「要求」章节的 ghproxy 镜像中转。若 ghproxy 不可达，用 `winget install Microsoft.PowerShell` 或 GitHub 官方 Release 手动下载 MSI。
 - 若 `git clone` 慢，可配置代理或使用 `https://mirror.ghproxy.com/https://github.com/ksyangshu/FileUnlocker` 中转。
 
