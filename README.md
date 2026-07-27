@@ -26,49 +26,48 @@ GUI（确认框/结果框）运行在用户态管理员会话（可见），SYST
 
 ## 安装
 
-以**管理员**身份运行：
-
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File install.ps1
-```
+直接**右键 `install.bat` → 以管理员身份运行**（无需 PowerShell 7 即可启动安装器，脚本会自动检测并引导安装依赖）：
 
 脚本会：
 1. 自提权为管理员
-2. 复制 `src\` 到 `C:\Program Files\FileUnlocker\`
-3. 自动下载 `handle.exe` 到安装目录
-4. 注册文件与文件夹右键菜单（修复文件夹右键缺 `wscript.exe` 前缀的历史 bug）
+2. 检测 PowerShell 7，缺失则弹窗询问是否下载安装
+3. 复制 `src\` 到 `C:\Program Files\FileUnlocker\`
+4. 自动下载 `handle.exe`（多镜像回退）到安装目录
+5. 注册文件与文件夹右键菜单
+6. 弹窗显示免责声明
 
 ## 卸载
 
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1
-```
+右键 `uninstall.bat` → 以管理员身份运行。会删除三处注册表项、注销 SYSTEM 计划任务、删除安装目录，并**重启资源管理器**使右键菜单立即失效。
 
 ## 目录结构
 
 ```
 FileUnlocker/
-├── install.ps1                 # 安装（部署 + 下载 handle + 注册菜单）
-├── uninstall.ps1               # 卸载
+├── install.bat                # 安装（BAT，全系统兼容，检查并引导依赖）
+├── uninstall.bat              # 卸载（BAT）
 ├── src/
 │   ├── FileUnlocker.ps1        # 主脚本：检测 + GUI + 派发 SYSTEM
 │   ├── unlock_system_runner.ps1# SYSTEM 执行器：收 PID 强杀
-│   └── FileUnlocker_Run.vbs    # 提权壳（VBS runas）
+│   └── FileUnlocker_Run.vbs    # 提权壳（VBS runas）+ 多选协调器
 ├── README.md
 ├── LICENSE
 └── .gitignore
 ```
 
+> 注：`install.ps1` / `uninstall.ps1` 为旧版 PowerShell 安装器，已弃用，请使用 `.bat` 版本。
+
 ## 要求
 
 - Windows 10/11
-- **PowerShell 7**（`pwsh.exe`）。未安装时安装脚本会提示，国内用户可用：
+- **PowerShell 7**（`pwsh.exe`）：本工具的必需依赖。未安装时安装脚本会自动检测并询问是否下载安装，国内用户可用：
   ```powershell
   # 方式一：winget（需已装 App Installer）
   winget install Microsoft.PowerShell
-  # 方式二：清华镜像站下载离线包
-  # 访问 https://mirrors.tuna.tsinghua.edu.cn/GitHub-release/PowerShell/PowerShell/
-  # 下载 PowerShell-7.x.x-win-x64.msi 双击安装
+  # 方式二：GitHub 官方（国内慢可用下方镜像中转）
+  # https://github.com/PowerShell/PowerShell/releases
+  # 方式三：ghproxy 镜像中转下载 MSI
+  # https://mirror.ghproxy.com/https://github.com/PowerShell/PowerShell/releases/download/v7.5.0/PowerShell-7.5.0-win-x64.msi
   ```
 - 管理员权限（终止进程需要）
 
@@ -76,7 +75,7 @@ FileUnlocker/
 
 - **handle.exe 下载**：安装脚本默认从 Sysinternals 官方源下载，国内可能缓慢或失败。脚本已内置镜像回退（ghproxy），若仍失败，可手动下载 `Handle.zip` 解压出 `handle.exe` 放到安装目录 `C:\Program Files\FileUnlocker\` 后重跑安装。
   - 手动下载镜像：`https://mirror.ghproxy.com/https://download.sysinternals.com/files/Handle.zip`
-- **PowerShell 7 安装源**：见上方「要求」章节的清华镜像。
+- **PowerShell 7 安装源**：见上方「要求」章节的 ghproxy 镜像中转。若 ghproxy 不可达，用 `winget install Microsoft.PowerShell` 或 GitHub 官方 Release 手动下载 MSI。
 - 若 `git clone` 慢，可配置代理或使用 `https://mirror.ghproxy.com/https://github.com/ksyangshu/FileUnlocker` 中转。
 
 ## 卸载
