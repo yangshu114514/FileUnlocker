@@ -1,0 +1,17 @@
+# 运行时生成的日志与结果
+unlock_log.txt
+unlock_system_result.txt
+
+# 多选协调用的临时队列/锁文件
+.fu_lock
+.fu_queue.txt
+
+# handle.exe 由 install.ps1 自动下载，不入库
+handle.exe
+Handle.zip
+
+# 系统/编辑器
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.lnk
