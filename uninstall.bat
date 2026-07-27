@@ -22,8 +22,8 @@ echo [FileUnlocker 卸载] 开始 > "%LOG%"
 :: 确认（VBScript 弹窗，避免 powershell 转义问题）
 set "VBS_TMP=%TEMP%\fu_ask_uninstall.vbs"
 (
-    echo MsgBox WScript.Arguments(0), vbYesNo + vbQuestion, WScript.Arguments(1)
-    echo If vbYes = MsgBox(WScript.Arguments(0), vbYesNo + vbQuestion, WScript.Arguments(1) Then
+    echo result = MsgBox(WScript.Arguments(0^), vbYesNo + vbQuestion, WScript.Arguments(1^)^)
+    echo If result = vbYes Then
     echo     WScript.Quit 0
     echo Else
     echo     WScript.Quit 1
