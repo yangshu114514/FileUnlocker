@@ -13,8 +13,12 @@ set "LOG=%TEMP%\FileUnlocker_install.log"
 :: ============ 管理员自提权 ============
 fltmc >nul 2>&1
 if errorlevel 1 (
-    echo [提权] 请求管理员权限...
-    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    echo [提权] 请求管理员权限，请在弹出的窗口中点击"是"...
+    powershell -NoProfile -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c \"\"%~f0\" %*\"' -Verb RunAs"
+    if errorlevel 1 (
+        echo 提权失败，请右键本文件选择"以管理员身份运行"。
+        pause
+    )
     exit /b
 )
 
@@ -111,8 +115,19 @@ exit /b 0
 :: %1=消息 %2=标题  返回 errorlevel 1=否/取消 0=是
 set "MSG=%~1"
 set "TITLE=%~2"
-powershell -NoProfile -STA -Command "$a=[System.Windows.Forms.MessageBox]::Show('%MSG:\`n=`n%','%TITLE%','YesNo','Question'); if($a -ne 'Yes'){exit 1}" 2>nul
-exit /b %errorlevel%
+set "VBS_TMP=%TEMP%\fu_ask.vbs"
+(
+    echo MsgBox WScript.Arguments(0), vbYesNo + vbQuestion, WScript.Arguments(1^)
+    echo If vbYes = MsgBox(WScript.Arguments(0), vbYesNo + vbQuestion, WScript.Arguments(1^) Then
+    echo     WScript.Quit 0
+    echo Else
+    echo     WScript.Quit 1
+    echo End If
+) > "%VBS_TMP%"
+cscript //NoLogo "%VBS_TMP%" "%MSG%" "%TITLE%"
+set "RC=%errorlevel%"
+del /f /q "%VBS_TMP%" 2>nul
+exit /b %RC%
 
 :install_pwsh
 echo [下载] PowerShell 7 ...
