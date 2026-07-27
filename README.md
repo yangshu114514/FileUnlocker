@@ -62,5 +62,27 @@ FileUnlocker/
 ## 要求
 
 - Windows 10/11
-- PowerShell 7（`pwsh.exe` 在 `C:\Program Files\PowerShell\7\`）
+- **PowerShell 7**（`pwsh.exe`）。未安装时安装脚本会提示，国内用户可用：
+  ```powershell
+  # 方式一：winget（需已装 App Installer）
+  winget install Microsoft.PowerShell
+  # 方式二：清华镜像站下载离线包
+  # 访问 https://mirrors.tuna.tsinghua.edu.cn/GitHub-release/PowerShell/PowerShell/
+  # 下载 PowerShell-7.x.x-win-x64.msi 双击安装
+  ```
 - 管理员权限（终止进程需要）
+
+## 国内用户注意事项
+
+- **handle.exe 下载**：安装脚本默认从 Sysinternals 官方源下载，国内可能缓慢或失败。脚本已内置镜像回退（ghproxy），若仍失败，可手动下载 `Handle.zip` 解压出 `handle.exe` 放到安装目录 `C:\Program Files\FileUnlocker\` 后重跑安装。
+  - 手动下载镜像：`https://mirror.ghproxy.com/https://download.sysinternals.com/files/Handle.zip`
+- **PowerShell 7 安装源**：见上方「要求」章节的清华镜像。
+- 若 `git clone` 慢，可配置代理或使用 `https://mirror.ghproxy.com/https://github.com/ksyangshu/FileUnlocker` 中转。
+
+## 卸载
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1
+```
+
+卸载会删除三处注册表项、注销 SYSTEM 计划任务、删除安装目录，并**重启资源管理器**使右键菜单立即失效（无需手动重启）。
