@@ -1,10 +1,11 @@
-Dim fso, vbsPath, dir, q, lockFile, queueFile, target, me
+﻿Dim fso, vbsPath, dir, q, lockFile, queueFile, target
 Set fso = CreateObject("Scripting.FileSystemObject")
 vbsPath = WScript.ScriptFullName
 dir = fso.GetParentFolderName(vbsPath)
 lockFile  = dir & "\.fu_lock"
 queueFile = dir & "\.fu_queue.txt"
 
+If WScript.Arguments.Count = 0 Then WScript.Quit 1
 target = WScript.Arguments(0)
 If target = "" Then WScript.Quit 1
 
@@ -28,7 +29,6 @@ End If
 On Error GoTo 0
 
 If Not isCoordinator Then
-    ' 非协调者：已写入队列，直接退出（协调者会处理）
     WScript.Quit 0
 End If
 
@@ -38,7 +38,7 @@ WScript.Sleep 1200
 ' 读取并去重队列
 Dim dict, line
 Set dict = CreateObject("Scripting.Dictionary")
-dict.CompareMode = 1 ' 文本比较
+dict.CompareMode = 1
 If fso.FileExists(queueFile) Then
     Set qf = fso.OpenTextFile(queueFile, 1) ' 1 = ForReading
     Do While Not qf.AtEndOfStream
@@ -48,7 +48,6 @@ If fso.FileExists(queueFile) Then
     qf.Close
 End If
 
-' 清理队列与锁
 On Error Resume Next
 fso.DeleteFile queueFile, True
 fso.DeleteFile lockFile, True
@@ -56,16 +55,34 @@ On Error GoTo 0
 
 If dict.Count = 0 Then WScript.Quit 1
 
-' 拼成位置参数列表（不带参数名，主 PS1 从 $args 收集）
+' 动态定位 pwsh.exe（不写死路径，兼容不同安装位置）
+Dim pwshPath, shell2, execObj, stdOut, line2, found
+pwshPath = ""
+Set shell2 = CreateObject("WScript.Shell")
+Set execObj = shell2.Exec("cmd.exe /c where pwsh.exe 2>nul")
+stdOut = execObj.StdOut.ReadAll
+For Each line2 In Split(stdOut, vbCrLf)
+    If InStr(line2, "pwsh.exe") > 0 Then
+        pwshPath = Trim(line2)
+        found = True
+        Exit For
+    End If
+Next
+If pwshPath = "" Then
+    MsgBox "未找到 PowerShell 7 (pwsh.exe)。请先安装 PowerShell 7 后重试。" & vbCrLf & "下载: https://github.com/PowerShell/PowerShell/releases", vbExclamation, "解除文件占用"
+    WScript.Quit 1
+End If
+
+' 拼成位置参数列表（主 PS1 从 $args 收集）
 q = Chr(34)
 ps1 = dir & "\FileUnlocker.ps1"
-Dim sb, i
+Dim sb, k
 sb = ""
-For i = 0 To UBound(items)
-    sb = sb & " " & q & items(i) & q
+For Each k In dict.Keys
+    sb = sb & " " & q & k & q
 Next
 
 args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & q & ps1 & q & sb
 
 Set sh = CreateObject("Shell.Application")
-sh.ShellExecute "C:\Program Files\PowerShell\7\pwsh.exe", args, "", "runas", 0
+sh.ShellExecute pwshPath, args, "", "runas", 0
