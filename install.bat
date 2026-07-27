@@ -90,6 +90,9 @@ reg delete "HKCU\Software\Classes\Directory\shell\FileUnlocker" /f >nul 2>&1
 
 :: ============ 完成 ============
 echo [4/4] 完成
+echo 重启资源管理器使右键菜单立即生效...
+taskkill /IM explorer.exe /F >nul 2>&1
+start "" explorer.exe
 echo.
 echo ========== 免责声明 ==========
 echo 本工具以强制终止进程方式解除文件/文件夹占用，可能导致未保存数据丢失或程序异常退出。
