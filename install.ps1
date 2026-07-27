@@ -27,6 +27,19 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
+# 安装目录已存在时询问，防止误覆盖
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+if (Test-Path $InstallDir) {
+    $ans = [System.Windows.Forms.MessageBox]::Show(
+        "检测到安装目录已存在：`n$InstallDir`n`n是否覆盖并继续安装？",
+        "解除文件占用 - 安装确认", "YesNo", "Question")
+    if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) {
+        Write-Host "已取消安装。" -ForegroundColor Yellow
+        exit 0
+    }
+    Write-Host "将继续覆盖现有目录。"
+}
+
 # 检测 PowerShell 7
 $pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
 if (-not $pwsh) {
@@ -102,3 +115,11 @@ reg delete "HKCU\Software\Classes\Directory\shell\FileUnlocker" /f 2>$null | Out
 
 Write-Host "[4/4] 完成"
 Write-Host "现在右键点击文件或文件夹即可看到『解除文件占用』。" -ForegroundColor Green
+
+Write-Host ""
+Write-Host "========== 免责声明 ==========" -ForegroundColor Yellow
+Write-Host "本工具以强制终止进程的方式解除文件/文件夹占用，可能导致未保存的数据丢失或程序异常退出。" -ForegroundColor Yellow
+Write-Host "使用者须自行承担由此产生的任何后果，作者不承担任何直接或间接责任。" -ForegroundColor Yellow
+Write-Host "请勿用于终止系统关键进程（如 lsass、svchost 等，本工具已内置保护），否则可能导致系统不稳定。" -ForegroundColor Yellow
+Write-Host "handle.exe 由 Sysinternals(微软)提供，本工具仅在使用时从其官方源下载，仓库不打包该二进制。" -ForegroundColor Yellow
+Write-Host "==============================" -ForegroundColor Yellow
