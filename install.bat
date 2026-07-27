@@ -1,30 +1,33 @@
-@echo off
-chcp 65001 >nul
+﻿@echo off
+chcp 65001 >nul 2>&1
 setlocal EnableExtensions EnableDelayedExpansion
 
-:: ============ 配置 ============
+:: 全锟斤拷锟斤拷志锟斤拷锟斤拷使锟斤拷锟斤拷也锟斤拷锟阶ｏ拷
+set "LOG=%TEMP%\FileUnlocker_install.log"
+echo [%date% %time%] 锟斤拷锟斤拷 install.bat > "%LOG%"
+echo [%date% %time%] 锟斤拷前目录: %CD% >> "%LOG%"
+echo [%date% %time%] 锟脚憋拷路锟斤拷: %~f0 >> "%LOG%"
+
+:: ============ 锟斤拷锟斤拷员锟斤拷锟斤拷权 ============
+fltmc >nul 2>&1
+if errorlevel 1 (
+    echo [%date% %time%] 锟角癸拷锟斤拷员锟斤拷锟斤拷锟斤拷锟斤拷权 >> "%LOG%"
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs" >> "%LOG%" 2>&1
+    echo [%date% %time%] 锟窖凤拷锟斤拷锟斤拷权锟斤拷锟剿筹拷原锟斤拷锟斤拷 >> "%LOG%"
+    exit /b
+)
+echo [%date% %time%] 锟斤拷锟角癸拷锟斤拷员 >> "%LOG%"
+
+:: ============ 锟斤拷锟斤拷 ============
 set "INSTALL_DIR=C:\Program Files\FileUnlocker"
 set "REPO_URL=https://github.com/ksyangshu/FileUnlocker"
 set "PWSH_URL=https://github.com/PowerShell/PowerShell/releases/download/v7.5.0/PowerShell-7.5.0-win-x64.msi"
 set "HANDLE_URL1=https://download.sysinternals.com/files/Handle.zip"
 set "HANDLE_URL2=https://mirror.ghproxy.com/https://download.sysinternals.com/files/Handle.zip"
-set "LOG=%TEMP%\FileUnlocker_install.log"
 
-:: ============ 管理员自提权 ============
-fltmc >nul 2>&1
-if errorlevel 1 (
-    echo [提权] 请求管理员权限，请在弹出的窗口中点击"是"...
-    powershell -NoProfile -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c \"\"%~f0\" %*\"' -Verb RunAs"
-    if errorlevel 1 (
-        echo 提权失败，请右键本文件选择"以管理员身份运行"。
-        pause
-    )
-    exit /b
-)
+echo [FileUnlocker 锟斤拷装] 锟斤拷始 > "%LOG%"
 
-echo [FileUnlocker 安装] 开始 > "%LOG%"
-
-:: ============ 检查 PowerShell 7 ============
+:: ============ 锟斤拷锟� PowerShell 7 ============
 set "PWSH_EXE="
 for %%P in ("%ProgramFiles%\PowerShell\7\pwsh.exe" "%ProgramFiles(x86)%\PowerShell\7\pwsh.exe") do (
     if exist %%~P set "PWSH_EXE=%%~P"
@@ -35,40 +38,40 @@ if not errorlevel 1 (
 )
 
 if not defined PWSH_EXE (
-    echo [检测] 未发现 PowerShell 7 >> "%LOG%"
-    call :ask "未检测到 PowerShell 7 (pwsh.exe)，这是本工具的必需依赖。`n是否现在下载并安装？`n(取消则退出安装)" "安装确认"
+    echo [锟斤拷锟絔 未锟斤拷锟斤拷 PowerShell 7 >> "%LOG%"
+    call :ask "未锟斤拷獾� PowerShell 7 (pwsh.exe)锟斤拷锟斤拷锟角憋拷锟斤拷锟竭的憋拷锟斤拷锟斤拷锟斤拷锟斤拷`n锟角凤拷锟斤拷锟斤拷锟斤拷锟截诧拷锟斤拷装锟斤拷`n(取锟斤拷锟斤拷锟剿筹拷锟斤拷装)" "锟斤拷装确锟斤拷"
     if errorlevel 1 (
-        echo [取消] 用户拒绝安装 PowerShell 7，退出。
+        echo [取锟斤拷] 锟矫伙拷锟杰撅拷锟斤拷装 PowerShell 7锟斤拷锟剿筹拷锟斤拷
         goto :end_cancel
     )
     call :install_pwsh
     if errorlevel 1 goto :end_fail
-    :: 重新定位
+    :: 锟斤拷锟铰讹拷位
     for %%P in ("%ProgramFiles%\PowerShell\7\pwsh.exe") do set "PWSH_EXE=%%~P"
     if not exist "!PWSH_EXE!" (
         for /f "delims=" %%i in ('where pwsh.exe 2^>nul') do set "PWSH_EXE=%%i"
     )
 )
-echo [检测] 使用 PowerShell: %PWSH_EXE% >> "%LOG%"
+echo [锟斤拷锟絔 使锟斤拷 PowerShell: %PWSH_EXE% >> "%LOG%"
 
-:: ============ 目录已存在则询问 ============
+:: ============ 目录锟窖达拷锟斤拷锟斤拷询锟斤拷 ============
 if exist "%INSTALL_DIR%" (
-    call :ask "检测到安装目录已存在：`n%INSTALL_DIR%`n是否覆盖并继续安装？" "安装确认"
+    call :ask "锟斤拷獾斤拷锟阶澳柯硷拷汛锟斤拷冢锟絗n%INSTALL_DIR%`n锟角否覆盖诧拷锟斤拷锟斤拷锟斤拷装锟斤拷" "锟斤拷装确锟斤拷"
     if errorlevel 1 (
-        echo [取消] 用户取消覆盖。
+        echo [取锟斤拷] 锟矫伙拷取锟斤拷锟斤拷锟角★拷
         goto :end_cancel
     )
 )
 
-:: ============ 部署文件 ============
-echo [1/4] 部署文件到 %INSTALL_DIR%
+:: ============ 锟斤拷锟斤拷锟侥硷拷 ============
+echo [1/4] 锟斤拷锟斤拷锟侥硷拷锟斤拷 %INSTALL_DIR%
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 xcopy "%~dp0src\*" "%INSTALL_DIR%\" /E /Y /Q >> "%LOG%" 2>&1
 set "VBS=%INSTALL_DIR%\FileUnlocker_Run.vbs"
 set "HANDLE_EXE=%INSTALL_DIR%\handle.exe"
 
 :: ============ handle.exe ============
-echo [2/4] 准备 handle.exe
+echo [2/4] 准锟斤拷 handle.exe
 set "HANDLE_OK=0"
 if exist "%HANDLE_EXE%" (
     set "HANDLE_OK=1"
@@ -78,41 +81,41 @@ if "%HANDLE_OK%"=="0" (
     if errorlevel 1 goto :end_fail
 )
 
-:: ============ 注册表 ============
-echo [3/4] 注册右键菜单
+:: ============ 注锟斤拷锟� ============
+echo [3/4] 注锟斤拷锟揭硷拷锟剿碉拷
 set "CMD=wscript.exe \"%VBS%\" \"%%1\""
 for %%S in (* AllFilesystemObjects Directory) do (
     set "KEY=HKLM\Software\Classes\%%S\shell\FileUnlocker"
-    reg add "!KEY!" /ve /t REG_SZ /d "解除文件占用" /f >nul 2>&1
+    reg add "!KEY!" /ve /t REG_SZ /d "锟斤拷锟斤拷募锟秸硷拷锟�" /f >nul 2>&1
     reg add "!KEY!" /v Icon /t REG_SZ /d "shell32.dll,131" /f >nul 2>&1
     reg add "!KEY!\command" /ve /t REG_SZ /d "%CMD%" /f >nul 2>&1
-    echo   已注册 %%S
+    echo   锟斤拷注锟斤拷 %%S
 )
-:: 清理旧 HKCU 残留
+:: 锟斤拷锟斤拷锟斤拷 HKCU 锟斤拷锟斤拷
 reg delete "HKCU\Software\Classes\*\shell\FileUnlocker" /f >nul 2>&1
 reg delete "HKCU\Software\Classes\Directory\shell\FileUnlocker" /f >nul 2>&1
 
-:: ============ 完成 ============
-echo [4/4] 完成
-echo 重启资源管理器使右键菜单立即生效...
+:: ============ 锟斤拷锟� ============
+echo [4/4] 锟斤拷锟�
+echo 锟斤拷锟斤拷锟斤拷源锟斤拷锟斤拷锟斤拷使锟揭硷拷锟剿碉拷锟斤拷锟斤拷锟斤拷效...
 taskkill /IM explorer.exe /F >nul 2>&1
 start "" explorer.exe
 echo.
-echo ========== 免责声明 ==========
-echo 本工具以强制终止进程方式解除文件/文件夹占用，可能导致未保存数据丢失或程序异常退出。
-echo 使用者须自行承担由此产生的任何后果，作者不承担任何直接或间接责任。
-echo 请勿用于终止系统关键进程（lsass、svchost 等，本工具已内置保护），否则可能导致系统不稳定。
-echo handle.exe 由 Sysinternals(微软) 提供，本工具仅在使用时从其官方源下载，仓库不打包该二进制。
+echo ========== 锟斤拷锟斤拷锟斤拷锟斤拷 ==========
+echo 锟斤拷锟斤拷锟斤拷锟斤拷强锟斤拷锟斤拷止锟斤拷锟教凤拷式锟斤拷锟斤拷募锟�/锟侥硷拷锟斤拷占锟矫ｏ拷锟斤拷锟杰碉拷锟斤拷未锟斤拷锟斤拷锟斤拷锟捷讹拷失锟斤拷锟斤拷锟斤拷斐ｏ拷顺锟斤拷锟�
+echo 使锟斤拷锟斤拷锟斤拷锟斤拷锟叫承碉拷锟缴此诧拷锟斤拷锟斤拷锟轿何猴拷锟斤拷锟斤拷锟斤拷卟锟斤拷械锟斤拷魏锟街憋拷踊锟斤拷锟斤拷锟斤拷巍锟�
+echo 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷止系统锟截硷拷锟斤拷锟教ｏ拷lsass锟斤拷svchost 锟饺ｏ拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟矫憋拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷艿锟斤拷锟较低筹拷锟斤拷榷锟斤拷锟�
+echo handle.exe 锟斤拷 Sysinternals(微锟斤拷) 锟结供锟斤拷锟斤拷锟斤拷锟竭斤拷锟斤拷使锟斤拷时锟斤拷锟斤拷俜锟皆达拷锟斤拷兀锟斤拷挚獠伙拷锟斤拷锟矫讹拷锟斤拷锟狡★拷
 echo ==============================
 echo.
-echo 现在右键点击文件或文件夹即可看到『解除文件占用』。
-echo 安装日志: %LOG%
+echo 锟斤拷锟斤拷锟揭硷拷锟斤拷锟斤拷募锟斤拷锟斤拷募锟斤拷屑锟斤拷煽锟斤拷锟斤拷锟斤拷锟斤拷锟侥硷拷占锟矫★拷锟斤拷
+echo 锟斤拷装锟斤拷志: %LOG%
 pause
 exit /b 0
 
-:: ============ 函数 ============
+:: ============ 锟斤拷锟斤拷 ============
 :ask
-:: %1=消息 %2=标题  返回 errorlevel 1=否/取消 0=是
+:: %1=锟斤拷息 %2=锟斤拷锟斤拷  锟斤拷锟斤拷 errorlevel 1=锟斤拷/取锟斤拷 0=锟斤拷
 set "MSG=%~1"
 set "TITLE=%~2"
 set "VBS_TMP=%TEMP%\fu_ask.vbs"
@@ -130,16 +133,16 @@ del /f /q "%VBS_TMP%" 2>nul
 exit /b %RC%
 
 :install_pwsh
-echo [下载] PowerShell 7 ...
+echo [锟斤拷锟斤拷] PowerShell 7 ...
 set "MSI=%TEMP%\PowerShell-7.msi"
 curl -L --max-time 120 -o "%MSI%" "%PWSH_URL%" 2>>"%LOG%"
 if not exist "%MSI%" (
-    echo [失败] PowerShell 7 下载失败（镜像不可达），请手动安装后重试。
-    echo 官方: https://github.com/PowerShell/PowerShell/releases
+    echo [失锟斤拷] PowerShell 7 锟斤拷锟斤拷失锟杰ｏ拷锟斤拷锟今不可达）锟斤拷锟斤拷锟街讹拷锟斤拷装锟斤拷锟斤拷锟皆★拷
+    echo 锟劫凤拷: https://github.com/PowerShell/PowerShell/releases
     pause
     exit /b 1
 )
-echo [安装] 静默安装 PowerShell 7 ...
+echo [锟斤拷装] 锟斤拷默锟斤拷装 PowerShell 7 ...
 msiexec /i "%MSI%" /quiet /norestart >> "%LOG%" 2>&1
 del /f /q "%MSI%" 2>nul
 exit /b 0
@@ -147,7 +150,7 @@ exit /b 0
 :download_handle
 set "ZIP=%TEMP%\Handle.zip"
 for %%U in ("%HANDLE_URL1%" "%HANDLE_URL2%") do (
-    echo   尝试: %%U
+    echo   锟斤拷锟斤拷: %%U
     curl -L --max-time 90 -o "%ZIP%" "%%U" 2>>"%LOG%"
     if exist "%ZIP%" (
         powershell -NoProfile -Command "Expand-Archive -Path '%ZIP%' -DestinationPath '%TEMP%\handle_tmp' -Force" >> "%LOG%" 2>&1
@@ -157,21 +160,21 @@ for %%U in ("%HANDLE_URL1%" "%HANDLE_URL2%") do (
         del /f /q "%ZIP%" 2>nul
         rmdir /s /q "%TEMP%\handle_tmp" 2>nul
         if exist "%HANDLE_EXE%" (
-            echo   完成
+            echo   锟斤拷锟�
             exit /b 0
         )
     )
 )
-echo [失败] handle.exe 下载失败，请手动下载放到 %HANDLE_EXE%
+echo [失锟斤拷] handle.exe 锟斤拷锟斤拷失锟杰ｏ拷锟斤拷锟街讹拷锟斤拷锟截放碉拷 %HANDLE_EXE%
 pause
 exit /b 1
 
 :end_cancel
-echo 安装已取消。
+echo 锟斤拷装锟斤拷取锟斤拷锟斤拷
 pause
 exit /b 0
 
 :end_fail
-echo 安装失败，详见日志 %LOG%
+echo 锟斤拷装失锟杰ｏ拷锟斤拷锟斤拷锟街� %LOG%
 pause
 exit /b 1
