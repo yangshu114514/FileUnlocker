@@ -1,88 +1,88 @@
-ï»¿Dim fso, vbsPath, dir, q, lockFile, queueFile, target
-Set fso = CreateObject("Scripting.FileSystemObject")
-vbsPath = WScript.ScriptFullName
-dir = fso.GetParentFolderName(vbsPath)
-lockFile  = dir & "\.fu_lock"
-queueFile = dir & "\.fu_queue.txt"
-
-If WScript.Arguments.Count = 0 Then WScript.Quit 1
-target = WScript.Arguments(0)
-If target = "" Then WScript.Quit 1
-
-' å†™è‡ªå·±çš„ç›®æ ‡åˆ°é˜Ÿåˆ—ï¼ˆè¿½åŠ ï¼‰
-On Error Resume Next
-Set qf = fso.OpenTextFile(queueFile, 8, True) ' 8 = ForAppending
-qf.WriteLine(target)
-qf.Close
-On Error GoTo 0
-
-' æŠ¢åè°ƒè€…é”ï¼šç¬¬äºŒä¸ªå®ä¾‹æ‰“å¼€å·²å­˜åœ¨çš„é”æ–‡ä»¶ä¼šå¤±è´¥
-Dim isCoordinator
-isCoordinator = False
-On Error Resume Next
-Set lf = fso.OpenTextFile(lockFile, 2, True) ' 2 = ForWriting, Create, ç‹¬å 
-If Err.Number = 0 Then
-    isCoordinator = True
-    lf.WriteLine("locked")
-    lf.Close
-End If
-On Error GoTo 0
-
-If Not isCoordinator Then
-    WScript.Quit 0
-End If
-
-' åè°ƒè€…ï¼šç­‰å¾…å…¶ä»–å®ä¾‹å†™å…¥ï¼ˆæœ€å¤š 1.2 ç§’ï¼‰
-WScript.Sleep 1200
-
-' è¯»å–å¹¶å»é‡é˜Ÿåˆ—
-Dim dict, line
-Set dict = CreateObject("Scripting.Dictionary")
-dict.CompareMode = 1
-If fso.FileExists(queueFile) Then
-    Set qf = fso.OpenTextFile(queueFile, 1) ' 1 = ForReading
-    Do While Not qf.AtEndOfStream
-        line = Trim(qf.ReadLine)
-        If line <> "" Then dict(line) = True
-    Loop
-    qf.Close
-End If
-
-On Error Resume Next
-fso.DeleteFile queueFile, True
-fso.DeleteFile lockFile, True
-On Error GoTo 0
-
-If dict.Count = 0 Then WScript.Quit 1
-
-' åŠ¨æ€å®šä½ pwsh.exeï¼ˆä¸å†™æ­»è·¯å¾„ï¼Œå…¼å®¹ä¸åŒå®‰è£…ä½ç½®ï¼‰
-Dim pwshPath, shell2, execObj, stdOut, line2, found
-pwshPath = ""
-Set shell2 = CreateObject("WScript.Shell")
-Set execObj = shell2.Exec("cmd.exe /c where pwsh.exe 2>nul")
-stdOut = execObj.StdOut.ReadAll
-For Each line2 In Split(stdOut, vbCrLf)
-    If InStr(line2, "pwsh.exe") > 0 Then
-        pwshPath = Trim(line2)
-        found = True
-        Exit For
-    End If
-Next
-If pwshPath = "" Then
-    MsgBox "æœªæ‰¾åˆ° PowerShell 7 (pwsh.exe)ã€‚è¯·å…ˆå®‰è£… PowerShell 7 åé‡è¯•ã€‚" & vbCrLf & "ä¸‹è½½: https://github.com/PowerShell/PowerShell/releases", vbExclamation, "è§£é™¤æ–‡ä»¶å ç”¨"
-    WScript.Quit 1
-End If
-
-' æ‹¼æˆä½ç½®å‚æ•°åˆ—è¡¨ï¼ˆä¸» PS1 ä» $args æ”¶é›†ï¼‰
-q = Chr(34)
-ps1 = dir & "\FileUnlocker.ps1"
-Dim sb, k
-sb = ""
-For Each k In dict.Keys
-    sb = sb & " " & q & k & q
-Next
-
-args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & q & ps1 & q & sb
-
-Set sh = CreateObject("Shell.Application")
-sh.ShellExecute pwshPath, args, "", "runas", 0
+Dim fso, vbsPath, dir, q, lockFile, queueFile, target
+Set fso = CreateObject("Scripting.FileSystemObject")
+vbsPath = WScript.ScriptFullName
+dir = fso.GetParentFolderName(vbsPath)
+lockFile  = dir & "\.fu_lock"
+queueFile = dir & "\.fu_queue.txt"
+
+If WScript.Arguments.Count = 0 Then WScript.Quit 1
+target = WScript.Arguments(0)
+If target = "" Then WScript.Quit 1
+
+' Ğ´×Ô¼ºµÄÄ¿±êµ½¶ÓÁĞ£¨×·¼Ó£©
+On Error Resume Next
+Set qf = fso.OpenTextFile(queueFile, 8, True) ' 8 = ForAppending
+qf.WriteLine(target)
+qf.Close
+On Error GoTo 0
+
+' ÇÀĞ­µ÷ÕßËø£ºµÚ¶ş¸öÊµÀı´ò¿ªÒÑ´æÔÚµÄËøÎÄ¼ş»áÊ§°Ü
+Dim isCoordinator
+isCoordinator = False
+On Error Resume Next
+Set lf = fso.OpenTextFile(lockFile, 2, True) ' 2 = ForWriting, Create, ¶ÀÕ¼
+If Err.Number = 0 Then
+    isCoordinator = True
+    lf.WriteLine("locked")
+    lf.Close
+End If
+On Error GoTo 0
+
+If Not isCoordinator Then
+    WScript.Quit 0
+End If
+
+' Ğ­µ÷Õß£ºµÈ´ıÆäËûÊµÀıĞ´Èë£¨×î¶à 1.2 Ãë£©
+WScript.Sleep 1200
+
+' ¶ÁÈ¡²¢È¥ÖØ¶ÓÁĞ
+Dim dict, line
+Set dict = CreateObject("Scripting.Dictionary")
+dict.CompareMode = 1
+If fso.FileExists(queueFile) Then
+    Set qf = fso.OpenTextFile(queueFile, 1) ' 1 = ForReading
+    Do While Not qf.AtEndOfStream
+        line = Trim(qf.ReadLine)
+        If line <> "" Then dict(line) = True
+    Loop
+    qf.Close
+End If
+
+On Error Resume Next
+fso.DeleteFile queueFile, True
+fso.DeleteFile lockFile, True
+On Error GoTo 0
+
+If dict.Count = 0 Then WScript.Quit 1
+
+' ¶¯Ì¬¶¨Î» pwsh.exe£¨²»Ğ´ËÀÂ·¾¶£¬¼æÈİ²»Í¬°²×°Î»ÖÃ£©
+Dim pwshPath, shell2, execObj, stdOut, line2, found
+pwshPath = ""
+Set shell2 = CreateObject("WScript.Shell")
+Set execObj = shell2.Exec("cmd.exe /c where pwsh.exe 2>nul")
+stdOut = execObj.StdOut.ReadAll
+For Each line2 In Split(stdOut, vbCrLf)
+    If InStr(line2, "pwsh.exe") > 0 Then
+        pwshPath = Trim(line2)
+        found = True
+        Exit For
+    End If
+Next
+If pwshPath = "" Then
+    MsgBox "Î´ÕÒµ½ PowerShell 7 (pwsh.exe)¡£ÇëÏÈ°²×° PowerShell 7 ºóÖØÊÔ¡£" & vbCrLf & "ÏÂÔØ: https://github.com/PowerShell/PowerShell/releases", vbExclamation, "½â³ıÎÄ¼şÕ¼ÓÃ"
+    WScript.Quit 1
+End If
+
+' Æ´³ÉÎ»ÖÃ²ÎÊıÁĞ±í£¨Ö÷ PS1 ´Ó $args ÊÕ¼¯£©
+q = Chr(34)
+ps1 = dir & "\FileUnlocker.ps1"
+Dim sb, k
+sb = ""
+For Each k In dict.Keys
+    sb = sb & " " & q & k & q
+Next
+
+args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & q & ps1 & q & sb
+
+Set sh = CreateObject("Shell.Application")
+sh.ShellExecute pwshPath, args, "", "runas", 0
