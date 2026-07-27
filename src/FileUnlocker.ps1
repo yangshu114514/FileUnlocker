@@ -17,14 +17,6 @@ $runner     = Join-Path $root 'unlock_system_runner.ps1'
 $currentPid = [System.Diagnostics.Process]::GetCurrentProcess().Id
 $Critical   = @('system','idle','svchost','csrss','lsass','smss','wininit','services','winlogon','explorer','dwm','fontdrvhost','lsaiso')
 
-function Find-Owners($Path) {
-    & $handle /accepteula -nobanner $Path 2>$null | ForEach-Object {
-        if ($_ -match '^(.+?)\s+pid:\s*(\d+)\s+type:\s*(\S+)\s+([0-9A-Fa-f]+):\s+(.+)$') {
-            $owners[[int]$matches[2]] = @{ Name=$matches[1].Trim(); Path=$matches[5].Trim() }
-        }
-    }
-}
-
 try {
     if ($TargetPaths.Count -eq 0) { throw "未指定文件路径" }
     foreach ($tp in $TargetPaths) {
@@ -44,13 +36,47 @@ try {
             ForEach-Object { $ownPids[$_.ProcessId] = $true }
     } catch {}
 
-    # 跨所有目标收集占用者
-    $owners = @{}
+    # ===== 构建匹配目标集（含文件夹及其所有子文件，仅一次递归）=====
+    # 目标规范化：统一尾部反斜杠，便于前缀匹配
+    $matchSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $folderSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($tp in $TargetPaths) {
-        Find-Owners $tp
+        $norm = $tp.TrimEnd('\')
+        [void]$matchSet.Add($norm)
         if (Test-Path -LiteralPath $tp -PathType Container) {
+            [void]$folderSet.Add($norm)
+            # 递归收集子文件路径（PowerShell 原生递归，远快于反复启动 handle）
             Get-ChildItem -LiteralPath $tp -Recurse -File -ErrorAction SilentlyContinue |
-                ForEach-Object { Find-Owners $_.FullName }
+                ForEach-Object { [void]$matchSet.Add($_.FullName.TrimEnd('\')) }
+        }
+    }
+
+    # ===== 单次 handle 全系统扫描，本地匹配所有目标 =====
+    # 只在存在文件夹目标时加 -a（列出全部句柄）；纯文件目标直接用路径参数更快
+    $owners = @{}
+    if ($folderSet.Count -gt 0) {
+        # 文件夹场景：dump 全系统句柄一次，逐行匹配前缀
+        & $handle /accepteula -nobanner -a 2>$null | ForEach-Object {
+            if ($_ -match 'pid:\s*(\d+)\s+type:\s*\S+\s+[0-9A-Fa-f]+:\s+(.+)$') {
+                $pid = [int]$matches[1]
+                $hpath = $matches[2].Trim().TrimEnd('\')
+                # 命中：路径等于某目标，或以某目标\ 开头（含子路径/子文件）
+                $hit = $false
+                if ($matchSet.Contains($hpath)) { $hit = $true }
+                else {
+                    foreach ($m in $matchSet) {
+                        if ($hpath.StartsWith($m + '\') -or $hpath.StartsWith($m + '/')) { $hit = $true; break }
+                    }
+                }
+                if ($hit) { $owners[$pid] = $true }
+            }
+        }
+    } else {
+        # 纯文件场景：每个文件单独跑 handle（文件数通常少，handle 直接过滤快）
+        foreach ($m in $matchSet) {
+            & $handle /accepteula -nobanner $m 2>$null | ForEach-Object {
+                if ($_ -match 'pid:\s*(\d+)') { $owners[[int]$matches[1]] = $true }
+            }
         }
     }
 
@@ -59,7 +85,7 @@ try {
         try {
             $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction Stop
             if ($ci.Name.ToLower() -in $Critical) { continue }
-            [pscustomobject]@{ Pid=$procId; Name=$owners[$procId].Name; Path=if($ci.ExecutablePath){$ci.ExecutablePath}else{'(未知)'} }
+            [pscustomobject]@{ Pid=$procId; Name=$ci.Name; Path=if($ci.ExecutablePath){$ci.ExecutablePath}else{'(未知)'} }
         } catch {}
     }
     $candidates = $candidates | Sort-Object Pid -Unique
