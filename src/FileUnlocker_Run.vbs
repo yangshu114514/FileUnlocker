@@ -52,8 +52,8 @@ If dict.Count = 0 Then WScript.Quit 1
 Dim pwshPath, probe
 pwshPath = ""
 For Each probe In Array( _
-    "C:\Program Files\PowerShell\7\pwsh.exe", _
-    "C:\Program Files (x86)\PowerShell\7\pwsh.exe" )
+    "C:\Program Files\PowerShell\pwsh.exe", _
+    "C:\Program Files (x86)\PowerShell\pwsh.exe" )
     If fso.FileExists(probe) Then
         pwshPath = probe
         Exit For
@@ -99,7 +99,7 @@ detectArg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & q 
 
 Dim wshExec
 Set wshExec = CreateObject("WScript.Shell")
-wshExec.Run pwshPath & " " & detectArg, 0, True
+wshExec.Run """ & pwshPath & """ & " " & detectArg, 0, True
 
 Dim content, parts, kv, total, occ, pids, names
 content = ""
