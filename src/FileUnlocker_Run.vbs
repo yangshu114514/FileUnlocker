@@ -52,8 +52,8 @@ If dict.Count = 0 Then WScript.Quit 1
 Dim pwshPath, probe
 pwshPath = ""
 For Each probe In Array( _
-    "C:\Program Files\PowerShell\pwsh.exe", _
-    "C:\Program Files (x86)\PowerShell\pwsh.exe" )
+    "C:\Program Files\PowerShell\7\pwsh.exe", _
+    "C:\Program Files (x86)\PowerShell\7\pwsh.exe" )
     If fso.FileExists(probe) Then
         pwshPath = probe
         Exit For
@@ -72,9 +72,9 @@ If pwshPath = "" Then
     Next
 End If
 If pwshPath = "" Then
-    MsgBox "未找到 PowerShell 7 (pwsh.exe)。请先安装 PowerShell 7 后重试。" & vbCrLf & _
-           "下载: https://github.com/PowerShell/PowerShell/releases", _
-           vbExclamation, "解除文件占用"
+    MsgBox "PowerShell 7 not found. Please install PowerShell 7 first." & vbCrLf & _
+           "Download: https://github.com/PowerShell/PowerShell/releases", _
+           vbExclamation, "File Unlocker"
     WScript.Quit 1
 End If
 
@@ -99,7 +99,7 @@ detectArg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & q 
 
 Dim wshExec
 Set wshExec = CreateObject("WScript.Shell")
-wshExec.Run """ & pwshPath & """ & " " & detectArg, 0, True
+wshExec.Run pwshPath & " " & detectArg, 0, True
 
 Dim content, parts, kv, total, occ, pids, names
 content = ""
@@ -126,12 +126,12 @@ If total = "" Then total = "?"
 If occ   = "" Then occ   = "?"
 
 If parts.Exists("ERROR") Then
-    MsgBox "检测出错：" & parts("ERROR"), vbExclamation, "解除文件占用"
+    MsgBox "Detection error: " & parts("ERROR"), vbExclamation, "File Unlocker"
     WScript.Quit 1
 End If
 
 If occ = "0" Or pids = "" Then
-    MsgBox "所选 " & total & " 个项目均未被任何进程占用。", vbInformation, "解除占用"
+    MsgBox "None of the " & total & " selected items are locked.", vbInformation, "File Unlocker"
     WScript.Quit 0
 End If
 
@@ -140,14 +140,14 @@ nameArr = Split(names, ";")
 dispName = ""
 For i = 0 To UBound(nameArr)
     If nameArr(i) <> "" Then
-        If dispName <> "" Then dispName = dispName & "、"
+        If dispName <> "" Then dispName = dispName & ", "
         dispName = dispName & nameArr(i)
     End If
 Next
-confirmMsg = "所选 " & total & " 个项目中，有 " & occ & " 个被以下进程占用：" & vbCrLf & vbCrLf & _
+confirmMsg = "Of the " & total & " selected items, " & occ & " are locked by:" & vbCrLf & vbCrLf & _
              dispName & vbCrLf & vbCrLf & _
-             "是否终止这些进程以解除占用？"
-rc = MsgBox(confirmMsg, vbYesNo + vbExclamation, "确认解锁")
+             "Kill these processes to unlock?"
+rc = MsgBox(confirmMsg, vbYesNo + vbExclamation, "Confirm Unlock")
 If rc <> vbYes Then WScript.Quit 0
 
 killArg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & q & ps1Path & q & _
@@ -184,8 +184,8 @@ Next
 killed = kParts("KILLED")
 detail = kParts("DETAIL")
 If killed = "" Then killed = "?"
-If detail = "" Then detail = "(无详细信息)"
+If detail = "" Then detail = "(no details)"
 
 Dim resultMsg
-resultMsg = "已请求终止 " & killed & " 个进程。" & vbCrLf & vbCrLf & detail
-MsgBox resultMsg, vbInformation, "解除占用完成"
+resultMsg = "Killed " & killed & " process(es)." & vbCrLf & vbCrLf & detail
+MsgBox resultMsg, vbInformation, "Unlock Complete"
