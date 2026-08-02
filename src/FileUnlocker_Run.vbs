@@ -99,7 +99,7 @@ detectArg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & q 
 
 Dim wshExec
 Set wshExec = CreateObject("WScript.Shell")
-wshExec.Run pwshPath & " " & detectArg, 0, True
+wshExec.Run Chr(34) & pwshPath & Chr(34) & " " & detectArg, 0, True
 
 Dim content, parts, kv, total, occ, pids, names
 content = ""
