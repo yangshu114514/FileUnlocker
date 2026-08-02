@@ -1,30 +1,78 @@
 param(
-    [switch]$WhatIf
+    [switch]$Detect,
+    [switch]$Kill,
+    [string]$Targets,
+    [string]$PidList,
+    [string]$OutFile
 )
 
-# 所有目标都从位置参数 $args 收集（避免首个位置参数被绑定到具名参数而丢失）
-$TargetPaths = @($args)
-if ($TargetPaths.Count -eq 0) { throw "未指定文件路径" }
-$TargetPaths = $TargetPaths | ForEach-Object {
-    $t = $_
-    try { [System.IO.Path]::GetFullPath($t) } catch { $t }
+# All output files are derived from $PSScriptRoot so the tool works no matter
+# which drive/dir it is installed to (C:\Program Files, D:\Tools, etc).
+$root   = $PSScriptRoot
+$handle = Join-Path $root 'handle.exe'
+$runner = Join-Path $root 'unlock_system_runner.ps1'
+
+if (-not $OutFile) { $OutFile = Join-Path $root '.fu_detect.txt' }
+
+function Write-Out($lines) {
+    $lines -join "`r`n" | Out-File -FilePath $OutFile -Encoding utf8
 }
 
-$root       = $PSScriptRoot
-$logFile    = Join-Path $root 'unlock_log.txt'
-$handle     = Join-Path $root 'handle.exe'
-$runner     = Join-Path $root 'unlock_system_runner.ps1'
-$currentPid = [System.Diagnostics.Process]::GetCurrentProcess().Id
-$Critical   = @('system','idle','svchost','csrss','lsass','smss','wininit','services','winlogon','explorer','dwm','fontdrvhost','lsaiso')
+# ===================== DETECT mode =====================
+if ($Detect) {
+    $paths = $Targets -split '[|]' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
 
-try {
-    if ($TargetPaths.Count -eq 0) { throw "未指定文件路径" }
-    foreach ($tp in $TargetPaths) {
-        if (-not (Test-Path -LiteralPath $tp)) { throw "路径不存在：$tp" }
+    $matchSet  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $folderSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($tp in $paths) {
+        $norm = $tp.TrimEnd('\')
+        if (-not (Test-Path -LiteralPath $norm)) { continue }
+        [void]$matchSet.Add($norm)
+        if (Test-Path -LiteralPath $tp -PathType Container) {
+            [void]$folderSet.Add($norm)
+            Get-ChildItem -LiteralPath $tp -Recurse -File -ErrorAction SilentlyContinue |
+                ForEach-Object { [void]$matchSet.Add($_.FullName.TrimEnd('\')) }
+        }
     }
-    if (-not (Test-Path -LiteralPath $handle)) { throw "找不到 handle.exe：$handle" }
 
-    # 收集自身进程树，避免误杀自己
+    if (-not (Test-Path -LiteralPath $handle)) {
+        Write-Out @("ERROR=handle.exe missing", "PATH=$handle")
+        exit 1
+    }
+
+    # P7: $pid is READ-ONLY (=$PID auto-var). NEVER use $pid as a variable.
+    # P4: handle -a output is per-process BLOCKED: pid lives on a header line,
+    #     file path on the following indented line. Track curPid across lines.
+    $owners = @{}
+    if ($folderSet.Count -gt 0) {
+        $curPid = 0
+        & $handle /accepteula -nobanner -a 2>$null | ForEach-Object {
+            if ($_ -match 'pid:\s*(\d+)') { $curPid = [int]$matches[1] }
+            elseif ($_ -match '^\s*\S+:\\?\s*File\s+\S*\s+(.+)$' -or
+                    $_ -match '^\s*\S+:\s*File\s+\S*\s+(.+)$') {
+                $hpath = $matches[1].Trim().TrimEnd('\')
+                $hit = $false
+                if ($matchSet.Contains($hpath)) { $hit = $true }
+                else {
+                    foreach ($m in $matchSet) {
+                        if ($hpath.StartsWith($m + '\') -or $hpath.StartsWith($m + '/')) { $hit = $true; break }
+                    }
+                }
+                if ($hit -and $curPid -gt 0) { $owners[$curPid] = $true }
+            }
+        }
+    } else {
+        # Pure-file scenario: per-target handle call is precise and avoids the
+        # cross-line pid parsing (P4).
+        foreach ($m in $matchSet) {
+            & $handle /accepteula -nobanner $m 2>$null | ForEach-Object {
+                if ($_ -match 'pid:\s*(\d+)') { $owners[[int]$matches[1]] = $true }
+            }
+        }
+    }
+
+    # Collect own process tree so we never suggest killing ourselves.
+    $currentPid = [System.Diagnostics.Process]::GetCurrentProcess().Id
     $ownPids = @{}; $ownPids[$currentPid] = $true
     try {
         $p = Get-CimInstance Win32_Process -Filter "ProcessId=$currentPid" -ErrorAction Stop
@@ -36,111 +84,66 @@ try {
             ForEach-Object { $ownPids[$_.ProcessId] = $true }
     } catch {}
 
-    # ===== 构建匹配目标集（含文件夹及其所有子文件，仅一次递归）=====
-    # 目标规范化：统一尾部反斜杠，便于前缀匹配
-    $matchSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    $folderSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($tp in $TargetPaths) {
-        $norm = $tp.TrimEnd('\')
-        [void]$matchSet.Add($norm)
-        if (Test-Path -LiteralPath $tp -PathType Container) {
-            [void]$folderSet.Add($norm)
-            # 递归收集子文件路径（PowerShell 原生递归，远快于反复启动 handle）
-            Get-ChildItem -LiteralPath $tp -Recurse -File -ErrorAction SilentlyContinue |
-                ForEach-Object { [void]$matchSet.Add($_.FullName.TrimEnd('\')) }
-        }
-    }
-
-    # ===== 单次 handle 全系统扫描，本地匹配所有目标 =====
-    # 只在存在文件夹目标时加 -a（列出全部句柄）；纯文件目标直接用路径参数更快
-    $owners = @{}
-    if ($folderSet.Count -gt 0) {
-        # 文件夹场景：dump 全系统句柄一次，逐行匹配前缀
-        & $handle /accepteula -nobanner -a 2>$null | ForEach-Object {
-            if ($_ -match 'pid:\s*(\d+)\s+type:\s*\S+\s+[0-9A-Fa-f]+:\s+(.+)$') {
-                $pid = [int]$matches[1]
-                $hpath = $matches[2].Trim().TrimEnd('\')
-                # 命中：路径等于某目标，或以某目标\ 开头（含子路径/子文件）
-                $hit = $false
-                if ($matchSet.Contains($hpath)) { $hit = $true }
-                else {
-                    foreach ($m in $matchSet) {
-                        if ($hpath.StartsWith($m + '\') -or $hpath.StartsWith($m + '/')) { $hit = $true; break }
-                    }
-                }
-                if ($hit) { $owners[$pid] = $true }
-            }
-        }
-    } else {
-        # 纯文件场景：每个文件单独跑 handle（文件数通常少，handle 直接过滤快）
-        foreach ($m in $matchSet) {
-            & $handle /accepteula -nobanner $m 2>$null | ForEach-Object {
-                if ($_ -match 'pid:\s*(\d+)') { $owners[[int]$matches[1]] = $true }
-            }
-        }
-    }
-
-    $candidates = foreach ($procId in $owners.Keys) {
+    $Critical = @('system','idle','svchost','csrss','lsass','smss','wininit','services','winlogon','explorer','dwm','fontdrvhost','lsaiso')
+    $candidates = @()
+    foreach ($procId in $owners.Keys) {
         if ($procId -eq $currentPid -or $ownPids.ContainsKey($procId)) { continue }
         try {
             $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction Stop
             if ($ci.Name.ToLower() -in $Critical) { continue }
-            [pscustomobject]@{ Pid=$procId; Name=$ci.Name; Path=if($ci.ExecutablePath){$ci.ExecutablePath}else{'(未知)'} }
+            $candidates += [pscustomobject]@{
+                Pid  = $procId
+                Name = $ci.Name
+                Path = if ($ci.ExecutablePath) { $ci.ExecutablePath } else { '(unknown)' }
+            }
         } catch {}
     }
     $candidates = $candidates | Sort-Object Pid -Unique
 
-    if ($WhatIf) {
-        if ($candidates.Count -eq 0) { "未检测到占用进程（共 $($TargetPaths.Count) 个目标）" }
-        else {
-            "检测到 $($candidates.Count) 个占用进程（共 $($TargetPaths.Count) 个目标）："
-            $candidates | ForEach-Object { "  PID $($_.Pid)  $($_.Name)  $($_.Path)" }
-        }
+    $pids  = ($candidates | ForEach-Object { $_.Pid })  -join ','
+    $names = ($candidates | ForEach-Object { $_.Name }) -join ';'
+    Write-Out @(
+        "TARGETS=$($paths.Count)"
+        "OCCUPIED=$($candidates.Count)"
+        "PIDS=$pids"
+        "PROCNAMES=$names"
+    )
+    exit 0
+}
+
+# ===================== KILL mode =====================
+if ($Kill) {
+    $killOut = Join-Path $root '.fu_kill.txt'
+    if (Test-Path $killOut) { Remove-Item $killOut -Force }
+    $pids = $PidList -split ',' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }
+    if ($pids.Count -eq 0) {
+        "KILLED=0`r`nDETAIL=no pid" | Out-File -FilePath $killOut -Encoding utf8
         exit 0
     }
 
-    if ($candidates.Count -eq 0) {
-        $resultText = "所选 $($TargetPaths.Count) 个项目均未被任何进程占用"
-        $title = "解除占用"
-    } else {
-        $list = ($candidates | ForEach-Object { "• $($_.Name) (PID $($_.Pid))`n  $($_.Path)" }) -join "`n`n"
-        Add-Type -AssemblyName System.Windows.Forms | Out-Null
-        $ans = [System.Windows.Forms.MessageBox]::Show("将终止以下 $($candidates.Count) 个持有句柄的进程（来自 $($TargetPaths.Count) 个目标）：`n`n$list`n`n确定终止？", "解除占用", "OKCancel", "Warning")
-        if ($ans -ne [System.Windows.Forms.DialogResult]::OK) { "已取消操作" | Out-File -FilePath $logFile -Encoding utf8; exit 0 }
-
-        $pidStr = ($candidates | ForEach-Object { $_.Pid }) -join ','
-        $sysResult = Join-Path $root 'unlock_system_result.txt'
-        if (Test-Path $sysResult) { Remove-Item $sysResult -Force }
-        $taskName = "WinDiag_Unlock_SYSTEM"
-        $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$runner`" -PidList `"$pidStr`" -ResultFile `"$sysResult`""
-        try {
-            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-            $action = New-ScheduledTaskAction -Execute "C:\Program Files\PowerShell\7\pwsh.exe" -Argument $arg
-            $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
-            Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
-            Start-ScheduledTask -TaskName $taskName
-            $waited = 0
-            while ($waited -lt 15) {
-                Start-Sleep -Seconds 1; $waited++
-                if ((Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State -eq 'Ready') { break }
-            }
-            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-            $sysOut = if (Test-Path $sysResult) { (Get-Content $sysResult -Raw).Trim() } else { "(SYSTEM 未返回结果)" }
-            $resultText = "共终止 $($candidates.Count) 个进程（来自 $($TargetPaths.Count) 个目标）：`n`n$sysOut"
-        } catch {
-            $resultText = "注册 SYSTEM 任务失败：$($_.Exception.Message)`n`n可改用普通管理员模式重试。"
-        }
-        $title = "解除占用"
-    }
-
-    $resultText | Out-File -FilePath $logFile -Encoding utf8
-    Add-Type -AssemblyName System.Windows.Forms | Out-Null
-    [System.Windows.Forms.MessageBox]::Show($resultText, $title, "OK", "Information")
-} catch {
-    "错误：$($_.Exception.Message)" | Out-File -FilePath $logFile -Encoding utf8
+    $sysResult = Join-Path $root 'unlock_system_result.txt'
+    if (Test-Path $sysResult) { Remove-Item $sysResult -Force }
+    $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$runner`" -PidList `"$($pids -join ',')`" -ResultFile `"$sysResult`""
     try {
-        Add-Type -AssemblyName System.Windows.Forms | Out-Null
-        [System.Windows.Forms.MessageBox]::Show("错误：$($_.Exception.Message)`n`n日志：$logFile", "解除占用", "OK", "Error")
-    } catch {}
+        Unregister-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Confirm:$false -ErrorAction SilentlyContinue
+        $action    = New-ScheduledTaskAction    -Execute "C:\Program Files\PowerShell\7\pwsh.exe" -Argument $arg
+        $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+        Register-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+        Start-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM"
+        $waited = 0
+        while ($waited -lt 15) {
+            Start-Sleep -Seconds 1; $waited++
+            if ((Get-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -ErrorAction SilentlyContinue).State -eq 'Ready') { break }
+        }
+        Unregister-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Confirm:$false -ErrorAction SilentlyContinue
+        $sysOut = if (Test-Path $sysResult) { (Get-Content $sysResult -Raw).Trim() } else { "(SYSTEM no output)" }
+        "KILLED=$($pids.Count)`r`nDETAIL=$sysOut" | Out-File -FilePath $killOut -Encoding utf8
+    } catch {
+        "KILLED=0`r`nDETAIL=SYSTEM task failed: $($_.Exception.Message)" | Out-File -FilePath $killOut -Encoding utf8
+    }
+    exit 0
 }
+
+Write-Out @("ERROR=unknown mode")
+exit 1
