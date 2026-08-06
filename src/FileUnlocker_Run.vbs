@@ -1,9 +1,8 @@
 Option Explicit
 
-Dim fso, shell, shApp
+Dim fso, shell
 Set fso   = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
-Set shApp = CreateObject("Shell.Application")
 
 Dim scriptDir, scriptPath, detectFile, killFile, lockFile, queueFile
 scriptDir  = fso.GetParentFolderName(WScript.ScriptFullName)
@@ -221,9 +220,8 @@ If userChoice <> 6 Then   ' 6 = vbYes
 End If
 
 ' ===================================================
-' 11. 终止占用进程（需管理员权限，用 runas 提权执行）
-'     Register-ScheduledTask 以 SYSTEM 身份运行需要管理员权限，
-'     普通右键（中等完整性）下会静默失败，因此必须提权。
+' 11. 终止占用进程（同步等待，PS1 内部自动提权）
+'     PS1 会检测当前是否管理员，不是则用 runas 提权重启自身。
 ' ===================================================
 On Error Resume Next
 fso.DeleteFile killFile, True
@@ -232,30 +230,19 @@ On Error GoTo 0
 args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden " & _
        "-File " & q & scriptPath & q & " " & _
        "-Kill -PidList " & q & pids & q & " -OutFile " & q & killFile & q
+cmd = q & pwsh & q & " " & args
 
-shApp.ShellExecute pwsh, args, "", "runas", 0
-
-' 轮询等待 kill 结果文件（最长 60 秒）
-Dim waited, ok
-waited = 0
-ok = False
-Do While waited < 120
-    WScript.Sleep 500
-    waited = waited + 1
-    If fso.FileExists(killFile) Then
-        ok = True
-        Exit Do
-    End If
-Loop
+' 同步等待：内部提权完成后 PS1 会把结果写入 killFile
+code = shell.Run(cmd, 0, True)
 
 Dim killCount, killDetail
-If ok Then
+If fso.FileExists(killFile) Then
     output = ReadUtf8File(killFile)
     killCount = GetValue(output, "KILLED", "?")
     killDetail = GetValue(output, "DETAIL", "(无返回)")
 Else
     killCount = "0"
-    killDetail = "未生成 kill 结果文件（可能提权被拒绝或超时）"
+    killDetail = "未生成 kill 结果文件（退出码 " & code & "）"
 End If
 
 ' ===================================================
