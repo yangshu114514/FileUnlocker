@@ -43,32 +43,43 @@ if ($Detect) {
     # P7: $pid is READ-ONLY (=$PID auto-var). NEVER use $pid as a variable.
     # P4: handle -a output is per-process BLOCKED: pid lives on a header line,
     #     file path on the following indented line. Track curPid across lines.
+    # P8: handle.exe extracts a helper binary into the CURRENT DIRECTORY, so it
+    #     must run from a writable dir. When launched from the context menu the
+    #     cwd is often read-only (C:\Windows\System32) -> force a writable cwd.
     $owners = @{}
-    if ($folderSet.Count -gt 0) {
-        $curPid = 0
-        & $handle /accepteula -nobanner -a 2>$null | ForEach-Object {
-            if ($_ -match 'pid:\s*(\d+)') { $curPid = [int]$matches[1] }
-            elseif ($_ -match '^\s*\S+:\\?\s*File\s+\S*\s+(.+)$' -or
-                    $_ -match '^\s*\S+:\s*File\s+\S*\s+(.+)$') {
-                $hpath = $matches[1].Trim().TrimEnd('\')
-                $hit = $false
-                if ($matchSet.Contains($hpath)) { $hit = $true }
-                else {
-                    foreach ($m in $matchSet) {
-                        if ($hpath.StartsWith($m + '\') -or $hpath.StartsWith($m + '/')) { $hit = $true; break }
+    $handleNeedsSingleScan = ($folderSet.Count -gt 0) -or ($matchSet.Count -gt 2)
+    Push-Location -Path $env:TEMP
+    try {
+        if ($handleNeedsSingleScan) {
+            # Folder or many files: ONE full -a scan + prefix match (P4). For a
+            # multi-select of dozens of files this is far faster than per-file calls.
+            $curPid = 0
+            & $handle /accepteula -nobanner -a 2>$null | ForEach-Object {
+                if ($_ -match 'pid:\s*(\d+)') { $curPid = [int]$matches[1] }
+                elseif ($_ -match '^\s*\S+:\\?\s*File\s+\S*\s+(.+)$' -or
+                        $_ -match '^\s*\S+:\s*File\s+\S*\s+(.+)$') {
+                    $hpath = $matches[1].Trim().TrimEnd('\')
+                    $hit = $false
+                    if ($matchSet.Contains($hpath)) { $hit = $true }
+                    else {
+                        foreach ($m in $matchSet) {
+                            if ($hpath.StartsWith($m + '\') -or $hpath.StartsWith($m + '/')) { $hit = $true; break }
+                        }
                     }
+                    if ($hit -and $curPid -gt 0) { $owners[$curPid] = $true }
                 }
-                if ($hit -and $curPid -gt 0) { $owners[$curPid] = $true }
+            }
+        } else {
+            # 1-2 pure files: per-target handle call is precise and avoids the
+            # cross-line pid parsing (P4).
+            foreach ($m in $matchSet) {
+                & $handle /accepteula -nobanner $m 2>$null | ForEach-Object {
+                    if ($_ -match 'pid:\s*(\d+)') { $owners[[int]$matches[1]] = $true }
+                }
             }
         }
-    } else {
-        # Pure-file scenario: per-target handle call is precise and avoids the
-        # cross-line pid parsing (P4).
-        foreach ($m in $matchSet) {
-            & $handle /accepteula -nobanner $m 2>$null | ForEach-Object {
-                if ($_ -match 'pid:\s*(\d+)') { $owners[[int]$matches[1]] = $true }
-            }
-        }
+    } finally {
+        Pop-Location
     }
 
     # Collect own process tree so we never suggest killing ourselves.
@@ -113,7 +124,8 @@ if ($Detect) {
 
 # ===================== KILL mode =====================
 if ($Kill) {
-    $killOut = Join-Path $root '.fu_kill.txt'
+    $killOut = $OutFile
+    if (-not $killOut) { $killOut = Join-Path $root '.fu_kill.txt' }
     if (Test-Path $killOut) { Remove-Item $killOut -Force }
     $pids = $PidList -split ',' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }
     if ($pids.Count -eq 0) {
