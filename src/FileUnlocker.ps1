@@ -127,33 +127,75 @@ if ($Kill) {
     $killOut = $OutFile
     if (-not $killOut) { $killOut = Join-Path $root '.fu_kill.txt' }
     if (Test-Path $killOut) { Remove-Item $killOut -Force }
+
+    # P9: 右键菜单进程是中等完整性，Register-ScheduledTask 以 SYSTEM 身份
+    # 运行需要管理员权限，中等完整性下会静默失败。这里检测权限，不足则
+    # 以 runas 提权重启自身，等待完成后 VBS 读取结果文件。
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Kill -PidList `"$PidList`" -OutFile `"$killOut`""
+        try {
+            Start-Process -FilePath "C:\Program Files\PowerShell\7\pwsh.exe" -ArgumentList $argList -Verb RunAs -Wait -WindowStyle Hidden
+        } catch {
+            "KILLED=0`r`nDETAIL=提权被拒绝：$($_.Exception.Message)" | Out-File -FilePath $killOut -Encoding utf8
+        }
+        exit 0
+    }
+
     $pids = $PidList -split ',' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }
     if ($pids.Count -eq 0) {
         "KILLED=0`r`nDETAIL=no pid" | Out-File -FilePath $killOut -Encoding utf8
         exit 0
     }
 
-    $sysResult = Join-Path $root 'unlock_system_result.txt'
-    if (Test-Path $sysResult) { Remove-Item $sysResult -Force }
-    $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$runner`" -PidList `"$($pids -join ',')`" -ResultFile `"$sysResult`""
-    try {
-        Unregister-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Confirm:$false -ErrorAction SilentlyContinue
-        $action    = New-ScheduledTaskAction    -Execute "C:\Program Files\PowerShell\7\pwsh.exe" -Argument $arg
-        $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-        $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
-        Register-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Action $action -Principal $principal -Settings $settings -Force | Out-Null
-        Start-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM"
-        $waited = 0
-        while ($waited -lt 15) {
-            Start-Sleep -Seconds 1; $waited++
-            if ((Get-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -ErrorAction SilentlyContinue).State -eq 'Ready') { break }
+    # P10: 已提权（管理员）直接 Stop-Process -Force。大多数占用文件的进程
+    # 管理员权限即可强杀，无需 SYSTEM 计划任务，响应快且不会卡死。
+    $killed = 0
+    $detail = @()
+    foreach ($id in $pids) {
+        try {
+            $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction Stop
+            $nm = $ci.Name.ToLower()
+            if ($nm -in @('system','idle','svchost','csrss','lsass','smss','wininit','services','winlogon','explorer','dwm','fontdrvhost','lsaiso')) {
+                $detail += "跳过关键进程 PID $id ($($ci.Name))"
+                continue
+            }
+            Stop-Process -Id $id -Force -ErrorAction Stop
+            $killed++
+            $detail += "已终止 PID $id ($($ci.Name))"
+        } catch {
+            $detail += "终止 PID $id 失败：$($_.Exception.Message)"
         }
-        Unregister-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Confirm:$false -ErrorAction SilentlyContinue
-        $sysOut = if (Test-Path $sysResult) { (Get-Content $sysResult -Raw).Trim() } else { "(SYSTEM no output)" }
-        "KILLED=$($pids.Count)`r`nDETAIL=$sysOut" | Out-File -FilePath $killOut -Encoding utf8
-    } catch {
-        "KILLED=0`r`nDETAIL=SYSTEM task failed: $($_.Exception.Message)" | Out-File -FilePath $killOut -Encoding utf8
     }
+
+    # P11: 仍有进程杀不掉（例如 SYSTEM 特权句柄）时，回退到 SYSTEM 计划任务
+    $stillAlive = @($pids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
+    if ($stillAlive.Count -gt 0) {
+        $sysResult = Join-Path $root 'unlock_system_result.txt'
+        if (Test-Path $sysResult) { Remove-Item $sysResult -Force }
+        $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$runner`" -PidList `"$($stillAlive -join ',')`" -ResultFile `"$sysResult`""
+        try {
+            Unregister-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Confirm:$false -ErrorAction SilentlyContinue
+            $action    = New-ScheduledTaskAction    -Execute "C:\Program Files\PowerShell\7\pwsh.exe" -Argument $arg
+            $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+            $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+            Register-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+            Start-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM"
+            $waited = 0
+            while ($waited -lt 20) {
+                Start-Sleep -Seconds 1; $waited++
+                if ((Get-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -ErrorAction SilentlyContinue).State -eq 'Ready') { break }
+            }
+            Unregister-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Confirm:$false -ErrorAction SilentlyContinue
+            $sysOut = if (Test-Path $sysResult) { (Get-Content $sysResult -Raw).Trim() } else { "(SYSTEM no output)" }
+            $detail += "SYSTEM 兜底：$sysOut"
+        } catch {
+            $detail += "SYSTEM 兜底失败：$($_.Exception.Message)"
+        }
+        if (Test-Path $sysResult) { Remove-Item $sysResult -Force }
+    }
+
+    "KILLED=$killed`r`nDETAIL=$($detail -join ' | ')" | Out-File -FilePath $killOut -Encoding utf8
     exit 0
 }
 
