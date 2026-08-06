@@ -5,8 +5,11 @@ unlock_system_result.txt
 # 多选协调用的临时队列/锁文件
 .fu_lock
 .fu_queue.txt
+.fu_detect.txt
+.fu_kill.txt
+.fu_lock_test.txt
 
-# handle.exe 由 install.ps1 自动下载，不入库
+# handle.exe 由 install.bat 自动下载，不入库
 handle.exe
 Handle.zip
 
@@ -15,3 +18,11 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 *.lnk
+
+# 备份目录（屎山存档，不入库）
+_backup_*/
+_backup_*
+archive/
+backup_installed/
+src_backup_*/
+src_backup_*
