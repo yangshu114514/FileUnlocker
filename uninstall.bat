@@ -1,73 +1,118 @@
 @echo off
+chcp 936 >nul
 setlocal EnableExtensions EnableDelayedExpansion
+
+rem ===================================================
+rem  FileUnlocker 卸载脚本
+rem  功能：移除右键菜单、注销计划任务、删除安装目录
+rem ===================================================
 
 set "INSTALL_DIR=C:\Program Files\FileUnlocker"
 set "LOG=%TEMP%\FileUnlocker_uninstall.log"
-echo [%date% %time%] 卸载开始 > "%LOG%"
 
-:: 管理员自提权
+echo. > "%LOG%"
+echo ================================================  >> "%LOG%"
+echo  FileUnlocker 卸载日志                              >> "%LOG%"
+echo  时间: %date% %time%                               >> "%LOG%"
+echo ================================================  >> "%LOG%"
+
+call :log "开始卸载 FileUnlocker"
+
+rem ---------- 1. 检查管理员权限 ----------
 fltmc >nul 2>&1
 if errorlevel 1 (
-    echo [%date% %time%] 非管理员，请求提权 >> "%LOG%"
+    call :log "未检测到管理员权限，正在请求 UAC 提权..."
     powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs" >> "%LOG%" 2>&1
-    echo [%date% %time%] 已启动提权进程，退出原进程 >> "%LOG%"
-    exit /b
+    exit /b 0
 )
-echo [%date% %time%] 已是管理员 >> "%LOG%"
+call :log "已确认管理员权限"
 
-call :ask "确定卸载 FileUnlocker？这将移除右键菜单并删除 %INSTALL_DIR%" "卸载确认"
+rem ---------- 2. 确认卸载 ----------
+call :ask "确定要卸载 FileUnlocker 吗？`n`n将执行：`n  ^^^! 移除右键菜单`n  ^^^! 注销 SYSTEM 计划任务`n  ^^^! 删除 %INSTALL_DIR%" "卸载确认"
 if errorlevel 1 (
-    echo [取消] 用户取消卸载
-    goto :end_cancel
+    call :log "用户取消卸载"
+    echo.
+    echo [已取消] 未执行卸载
+    pause
+    exit /b 0
 )
 
-echo [1/3] 移除右键菜单注册表项
-for %%S in (* AllFilesystemObjects Directory) do (
+rem ---------- 3. 移除右键菜单 ----------
+echo.
+echo [1/4] 移除右键菜单
+call :log "删除右键菜单注册表项"
+for %%S in (AllFilesystemObjects Directory) do (
     reg delete "HKLM\Software\Classes\%%S\shell\FileUnlocker" /f >nul 2>&1
-    echo   已移除 %%S
+    echo       已移除 %%S
 )
+reg delete "HKLM\Software\Classes\*\shell\FileUnlocker" /f >nul 2>&1
+echo       已移除 *
 reg delete "HKCU\Software\Classes\*\shell\FileUnlocker" /f >nul 2>&1
 reg delete "HKCU\Software\Classes\Directory\shell\FileUnlocker" /f >nul 2>&1
+call :log "右键菜单移除完成"
 
-echo [2/3] 注销计划任务
+rem ---------- 4. 注销 SYSTEM 计划任务 ----------
+echo [2/4] 注销 SYSTEM 计划任务
+call :log "注销 WinDiag_Unlock_SYSTEM 计划任务"
 powershell -NoProfile -Command "Unregister-ScheduledTask -TaskName 'WinDiag_Unlock_SYSTEM' -Confirm:$false -ErrorAction SilentlyContinue" >> "%LOG%" 2>&1
+call :log "计划任务已清理"
 
-echo [3/3] 删除安装目录
+rem ---------- 5. 删除安装目录 ----------
+echo [3/4] 删除安装目录
+call :log "删除 %INSTALL_DIR%"
 if exist "%INSTALL_DIR%" (
     rmdir /s /q "%INSTALL_DIR%" 2>nul
     if exist "%INSTALL_DIR%" (
-        echo [警告] 无法完全删除 %INSTALL_DIR%，请关闭相关文件后重试
+        call :log "警告：无法完全删除 %INSTALL_DIR%"
+        echo       [警告] 无法完全删除安装目录（可能有文件被占用）
+        echo              请手动删除：%INSTALL_DIR%
     ) else (
-        echo   已删除 %INSTALL_DIR%
+        echo       已删除 %INSTALL_DIR%
+        call :log "安装目录已删除"
     )
+) else (
+    echo       目录不存在，跳过
+    call :log "目录不存在，跳过"
 )
 
-echo 正在重启资源管理器以刷新右键菜单...
+rem ---------- 6. 重启资源管理器 ----------
+echo [4/4] 重启资源管理器
+call :log "重启 explorer.exe"
 taskkill /IM explorer.exe /F >nul 2>&1
 start "" explorer.exe
+call :log "卸载完成"
+
+rem ---------- 完成 ----------
 echo.
-echo FileUnlocker 已卸载。日志: %LOG%
+echo ================================================
+echo  卸载完成！
+echo ================================================
+echo.
+echo  日志文件: %LOG%
+echo.
 pause
 exit /b 0
+
+
+rem ===================================================
+rem  子函数
+rem ===================================================
 
 :ask
 set "MSG=%~1"
 set "TITLE=%~2"
-set "VBS_TMP=%TEMP%\fu_ask.vbs"
+set "VBS_ASK=%TEMP%\fu_ask_%RANDOM%%RANDOM%.vbs"
 (
-    echo result = MsgBox(WScript.Arguments(0^), vbYesNo + vbQuestion, WScript.Arguments(1^)^)
-    echo If result = vbYes Then
-    echo     WScript.Quit 0
-    echo Else
-    echo     WScript.Quit 1
-    echo End If
-) > "%VBS_TMP%"
-cscript //NoLogo "%VBS_TMP%" "%MSG%" "%TITLE%"
+    echo Dim result
+    echo result = MsgBox^(Replace^(WScript.Arguments^(0^), Chr^(96^) ^& "n", vbCrLf^), vbYesNo + vbQuestion, WScript.Arguments^(1^)^)
+    echo If result = vbYes Then WScript.Quit 0 Else WScript.Quit 1
+) > "%VBS_ASK%"
+cscript //NoLogo "%VBS_ASK%" "%MSG%" "%TITLE%"
 set "RC=%errorlevel%"
-del /f /q "%VBS_TMP%" 2>nul
+del /f /q "%VBS_ASK%" 2>nul
 exit /b %RC%
 
-:end_cancel
-echo 已取消卸载
-pause
+
+:log
+echo [%date% %time%] %~1 >> "%LOG%"
 exit /b 0
