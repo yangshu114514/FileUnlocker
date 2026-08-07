@@ -182,9 +182,8 @@ if ($Kill) {
             Register-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Action $action -Principal $principal -Settings $settings -Force | Out-Null
             Start-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM"
             $waited = 0
-            while ($waited -lt 20) {
+            while ($waited -lt 12 -and -not (Test-Path $sysResult)) {
                 Start-Sleep -Seconds 1; $waited++
-                if ((Get-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -ErrorAction SilentlyContinue).State -eq 'Ready') { break }
             }
             Unregister-ScheduledTask -TaskName "WinDiag_Unlock_SYSTEM" -Confirm:$false -ErrorAction SilentlyContinue
             $sysOut = if (Test-Path $sysResult) { (Get-Content $sysResult -Raw).Trim() } else { "(SYSTEM no output)" }
