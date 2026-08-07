@@ -1,14 +1,16 @@
 # FileUnlocker — 右键解除文件/文件夹占用
 
-一个 Windows 右键菜单工具：右键文件或文件夹 →「解除文件占用」→ 精确找出持有该路径句柄的进程并以 SYSTEM 权限强制终止。
+一个 Windows 右键菜单工具：右键文件或文件夹 →「解除文件占用」→ 精确找出持有该路径句柄的进程并强制终止。
 
 ## 特性
 
 - **精确检测**：基于 Sysinternals `handle.exe` 枚举真实文件句柄，不靠命令行字符串猜测（旧方案漏报/误杀的根源）。
-- **SYSTEM 提权**：终止动作通过 `NT AUTHORITY\SYSTEM` 计划任务执行，可杀掉普通管理员杀不动的顽固进程。
+- **自动提权**：kill 由 PS1 检测权限，非管理员自动以 `runas` 提权重启自身执行，普通占用进程直接用管理员 `Stop-Process -Force` 强杀，响应快。
+- **SYSTEM 兜底**：对管理员也杀不掉的顽固进程（如 SYSTEM 特权句柄），自动回退到 `NT AUTHORITY\SYSTEM` 计划任务执行 `unlock_system_runner.ps1` 强杀。
 - **安全护栏**：自动排除自身进程树与关键系统进程（svchost / lsass / winlogon 等），终止前弹确认框。
 - **文件与文件夹通用**：目录模式递归检测内部所有文件的持有者。
-- **自动安装 handle**：`install.ps1` 自动从 Sysinternals 官网下载 `handle.exe`，无需手动准备。
+- **多选合并**：多选文件时合并为一次检测，只弹一个确认框和结果框。
+- **自动安装 handle**：`install.bat` 自动从 Sysinternals 官网下载 `handle.exe`，无需手动准备。
 
 ## 原理
 
@@ -16,13 +18,12 @@
 
 ```
 右键菜单 → wscript.exe FileUnlocker_Run.vbs "%1"
-         → VBS 以 runas 提权管理员 → pwsh FileUnlocker.ps1
-         → handle.exe 枚举持有者 → 弹确认框
-         → 注册 SYSTEM 计划任务执行 unlock_system_runner.ps1 强杀
+         → VBS 队列/协调者：多选路径合并去重
+         → pwsh FileUnlocker.ps1 -Detect → handle.exe 枚举持有者 → 弹确认框
+         → 用户点"是" → pwsh FileUnlocker.ps1 -Kill
+         → PS1 自动提权 → Stop-Process -Force 强杀（必要时 SYSTEM 计划任务兜底）
          → 读回结果弹窗
 ```
-
-GUI（确认框/结果框）运行在用户态管理员会话（可见），SYSTEM 仅在后台杀进程并写结果文件（规避 Session 0 隔离）。
 
 ## 安装
 
@@ -77,11 +78,3 @@ FileUnlocker/
   - 手动下载：`https://download.sysinternals.com/files/Handle.zip` 或 `https://mirror.ghproxy.com/https://download.sysinternals.com/files/Handle.zip`
 - **PowerShell 7 安装源**：见上方「要求」章节的 ghproxy 镜像中转。若 ghproxy 不可达，用 `winget install Microsoft.PowerShell` 或 GitHub 官方 Release 手动下载 MSI。
 - 若 `git clone` 慢，可配置代理或使用 `https://mirror.ghproxy.com/https://github.com/ksyangshu/FileUnlocker` 中转。
-
-## 卸载
-
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1
-```
-
-卸载会删除三处注册表项、注销 SYSTEM 计划任务、删除安装目录，并**重启资源管理器**使右键菜单立即失效（无需手动重启）。
