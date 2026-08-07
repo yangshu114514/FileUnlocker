@@ -13,6 +13,31 @@ lockFile   = scriptDir & "\.fu_lock"
 queueFile  = scriptDir & "\.fu_queue.txt"
 
 ' ===================================================
+' 调试日志（%TEMP%\FileUnlocker_debug.log）
+' ===================================================
+Dim DEBUG_LOG, debugErr
+DEBUG_LOG = shell.ExpandEnvironmentStrings("%TEMP%") & "\FileUnlocker_debug.log"
+On Error Resume Next
+fso.DeleteFile DEBUG_LOG, True
+debugErr = Err.Number
+On Error GoTo 0
+
+Sub LogIt(msg)
+    Dim f
+    On Error Resume Next
+    Set f = fso.OpenTextFile(DEBUG_LOG, 8, True)
+    If Err.Number = 0 Then
+        f.WriteLine CStr(Now) & " | " & msg
+        f.Close
+    End If
+    On Error GoTo 0
+End Sub
+
+LogIt "===== FileUnlocker VBS 启动 ====="
+LogIt "ScriptFullName=" & WScript.ScriptFullName
+LogIt "参数数量=" & WScript.Arguments.Count
+
+' ===================================================
 ' 1. 清理 30 秒前的陈旧锁/队列（上次崩溃残留）
 ' ===================================================
 On Error Resume Next
@@ -28,12 +53,14 @@ On Error GoTo 0
 ' 2. 检查参数：必须传入至少一个文件/文件夹路径
 ' ===================================================
 If WScript.Arguments.Count = 0 Then
+    LogIt "错误: 无参数，显示用法"
     shell.Popup "用法：" & vbCrLf & _
                 "wscript.exe """ & WScript.ScriptFullName & """ ""目标路径""" & vbCrLf & vbCrLf & _
                 "建议通过右键菜单 -“解除文件占用”调用。", _
                 60, "FileUnlocker - 使用说明", 64
     WScript.Quit 1
 End If
+LogIt "参数0=" & WScript.Arguments(0)
 
 ' ===================================================
 ' 3. 多选合并：把自己的路径写入队列
@@ -62,7 +89,11 @@ If Err.Number = 0 Then
 End If
 On Error GoTo 0
 
-If Not isCoordinator Then WScript.Quit 0
+If Not isCoordinator Then
+    LogIt "非协调者，退出（已有协调者处理）"
+    WScript.Quit 0
+End If
+LogIt "本实例成为协调者"
 
 ' ===================================================
 ' 5. 协调者：等队列不再增长（最多 3 个稳定周期）
@@ -111,7 +142,11 @@ fso.DeleteFile queueFile, True
 fso.DeleteFile lockFile, True
 On Error GoTo 0
 
-If dict.Count = 0 Then WScript.Quit 1
+If dict.Count = 0 Then
+    LogIt "队列为空，退出"
+    WScript.Quit 1
+End If
+LogIt "收集到 " & dict.Count & " 个路径"
 
 ' ===================================================
 ' 7. 拼接所有路径（| 分隔）
@@ -143,16 +178,20 @@ If pwsh = "" Then
 End If
 
 If pwsh = "" Or Not fso.FileExists(pwsh) Then
+    LogIt "错误: 找不到 pwsh.exe"
     shell.Popup "找不到 PowerShell 7 (pwsh.exe)。" & vbCrLf & vbCrLf & _
                 "请先安装：" & vbCrLf & "https://github.com/PowerShell/PowerShell/releases", _
                 60, "FileUnlocker - 缺少依赖", 48
     WScript.Quit 1
 End If
+LogIt "pwsh=" & pwsh
 
 If Not fso.FileExists(scriptPath) Then
+    LogIt "错误: 找不到主脚本 " & scriptPath
     shell.Popup "找不到主脚本：" & vbCrLf & scriptPath, 60, "FileUnlocker - 错误", 48
     WScript.Quit 1
 End If
+LogIt "scriptPath=" & scriptPath
 
 ' ===================================================
 ' 9. 调用 FileUnlocker.ps1 进行占用检测（同步等待）
@@ -167,11 +206,16 @@ args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden " & _
        "-File " & q & scriptPath & q & " " & _
        "-Detect -Targets " & q & sb & q & " -OutFile " & q & detectFile & q
 cmd = q & pwsh & q & " " & args
+LogIt "开始 detect"
+LogIt "DETECT_CMD=" & cmd
 code = shell.Run(cmd, 0, True)
+LogIt "detect 返回退出码=" & code
 
 If code <> 0 Then
+    LogIt "detect 失败，退出码=" & code
     If fso.FileExists(detectFile) Then
         output = ReadUtf8File(detectFile)
+        LogIt "detect 错误文件内容=" & output
         If InStr(output, "ERROR=") > 0 Then
             Dim errLine
             For Each errLine In Split(output, vbCrLf)
@@ -187,11 +231,13 @@ If code <> 0 Then
 End If
 
 If Not fso.FileExists(detectFile) Then
+    LogIt "错误: detect 未生成结果文件"
     shell.Popup "未能生成检测结果文件，脚本可能未正确执行。", 60, "FileUnlocker - 错误", 48
     WScript.Quit 1
 End If
 
 output = ReadUtf8File(detectFile)
+LogIt "detect 结果: " & output
 
 ' ===================================================
 ' 10. 解析检测结果，展示给用户
@@ -214,8 +260,10 @@ confirmMsg = "所选 " & total & " 个项目中，被以下 " & occupied & " 个进程占用："
              vbCrLf & vbCrLf & "注意：强制结束进程可能导致未保存数据丢失！" & vbCrLf & _
              "请确认这些进程可以安全结束后，再继续。" & vbCrLf & vbCrLf & "是否强制结束这些进程并解除文件占用？"
 userChoice = shell.Popup(confirmMsg, 0, "FileUnlocker - 确认强制结束", 33)   ' 33 = vbYesNo + vbQuestion
+LogIt "用户确认框返回=" & userChoice & " (6=是)"
 
 If userChoice <> 6 Then   ' 6 = vbYes
+    LogIt "用户取消，退出"
     WScript.Quit 0
 End If
 
@@ -232,26 +280,45 @@ args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden " & _
        "-File " & q & scriptPath & q & " " & _
        "-Kill -PidList " & q & pids & q & " -OutFile " & q & killFile & q
 cmd = q & pwsh & q & " " & args
+LogIt "开始 kill，PIDS=[" & pids & "]"
+LogIt "KILL_CMD=" & cmd
 
 Dim killProc, killWait, killExited
+On Error Resume Next
 Set killProc = shell.Exec(cmd)
+If Err.Number <> 0 Then
+    LogIt "Exec 启动 kill 失败，错误=" & Err.Number & " " & Err.Description
+Else
+    LogIt "Exec 启动 kill 成功"
+End If
+On Error GoTo 0
 killWait = 0
 killExited = False
 Do While killWait < 150   ' 最长等 75 秒（150 × 0.5 秒）
     WScript.Sleep 500
     killWait = killWait + 1
-    If fso.FileExists(killFile) Then Exit Do
-    If killProc.Status = 1 Then   ' 1 = 进程已结束
-        killExited = True
+    If fso.FileExists(killFile) Then
+        LogIt "kill 结果文件出现（等待 " & killWait & " 次×0.5s）"
         Exit Do
     End If
+    On Error Resume Next
+    If killProc.Status = 1 Then   ' 1 = 进程已结束
+        killExited = True
+        On Error GoTo 0
+        LogIt "kill 进程已退出，但未等到结果文件（等待 " & killWait & " 次×0.5s）"
+        Exit Do
+    End If
+    On Error GoTo 0
 Loop
+If killWait >= 150 Then LogIt "kill 等待超时（75 秒）"
+LogIt "kill 轮询结束: killWait=" & killWait & " killExited=" & killExited
 
 Dim killCount, killDetail
 If fso.FileExists(killFile) Then
     output = ReadUtf8File(killFile)
     killCount = GetValue(output, "KILLED", "?")
     killDetail = GetValue(output, "DETAIL", "(无返回)")
+    LogIt "kill 结果: " & output
 Else
     killCount = "0"
     If killWait >= 150 Then
@@ -261,6 +328,7 @@ Else
     Else
         killDetail = "kill 结果文件未生成"
     End If
+    LogIt "kill 失败: " & killDetail
 End If
 
 ' ===================================================
@@ -277,7 +345,9 @@ On Error GoTo 0
 Dim resultMsg
 resultMsg = "处理完成！共强制结束 " & killCount & " 个进程。" & vbCrLf & vbCrLf & _
             "详细信息：" & vbCrLf & killDetail
+LogIt "弹出最终结果框: " & resultMsg
 shell.Popup resultMsg, 60, "FileUnlocker - 完成", 64
+LogIt "===== VBS 正常结束 ====="
 
 WScript.Quit 0
 

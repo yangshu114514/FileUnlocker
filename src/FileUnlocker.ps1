@@ -14,8 +14,22 @@ $runner = Join-Path $root 'unlock_system_runner.ps1'
 
 if (-not $OutFile) { $OutFile = Join-Path $root '.fu_detect.txt' }
 
+# ========== 调试日志 ==========
+$DebugLog = Join-Path $env:TEMP 'FileUnlocker_ps1_debug.log'
+function Log-PS1($msg) {
+    try {
+        Add-Content -LiteralPath $DebugLog -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $msg" -Encoding utf8 -ErrorAction Stop
+    } catch {}
+}
+Log-PS1 "===== PS1 启动 ====="
+Log-PS1 "Detect=$Detect Kill=$Kill Targets=[$Targets] PidList=[$PidList] OutFile=[$OutFile]"
+Log-PS1 "PSCommandPath=[$PSCommandPath]"
+$isAdminNow = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+Log-PS1 "isAdmin=$isAdminNow"
+
 function Write-Out($lines) {
     $lines -join "`r`n" | Out-File -FilePath $OutFile -Encoding utf8
+    Log-PS1 "Write-Out → $OutFile : $($lines -join ' | ')"
 }
 
 # ===================== DETECT mode =====================
@@ -48,6 +62,7 @@ if ($Detect) {
     #     cwd is often read-only (C:\Windows\System32) -> force a writable cwd.
     $owners = @{}
     $handleNeedsSingleScan = ($folderSet.Count -gt 0) -or ($matchSet.Count -gt 2)
+    Log-PS1 "detect: paths=$($paths.Count) matchSet=$($matchSet.Count) folderSet=$($folderSet.Count) singleScan=$handleNeedsSingleScan"
     Push-Location -Path $env:TEMP
     try {
         if ($handleNeedsSingleScan) {
@@ -113,6 +128,7 @@ if ($Detect) {
 
     $pids  = ($candidates | ForEach-Object { $_.Pid })  -join ','
     $names = ($candidates | ForEach-Object { $_.Name }) -join ';'
+    Log-PS1 "detect 完成: candidates=$($candidates.Count) pids=[$pids] names=[$names]"
     Write-Out @(
         "TARGETS=$($paths.Count)"
         "OCCUPIED=$($candidates.Count)"
@@ -143,7 +159,9 @@ if ($Kill) {
     }
 
     $pids = $PidList -split ',' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }
+    Log-PS1 "kill: 解析 PID=[$($pids -join ',')]"
     if ($pids.Count -eq 0) {
+        Log-PS1 "kill: 无有效 PID，写 no pid"
         "KILLED=0`r`nDETAIL=no pid" | Out-File -FilePath $killOut -Encoding utf8
         exit 0
     }
@@ -157,13 +175,16 @@ if ($Kill) {
             $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction Stop
             $nm = $ci.Name.ToLower()
             if ($nm -in @('system','idle','svchost','csrss','lsass','smss','wininit','services','winlogon','explorer','dwm','fontdrvhost','lsaiso')) {
+                Log-PS1 "kill: 跳过关键进程 PID $id ($($ci.Name))"
                 $detail += "跳过关键进程 PID $id ($($ci.Name))"
                 continue
             }
             Stop-Process -Id $id -Force -ErrorAction Stop
             $killed++
             $detail += "已终止 PID $id ($($ci.Name))"
+            Log-PS1 "kill: 已终止 PID $id ($($ci.Name))"
         } catch {
+            Log-PS1 "kill: 终止 PID $id 失败: $($_.Exception.Message)"
             $detail += "终止 PID $id 失败：$($_.Exception.Message)"
         }
     }
@@ -195,6 +216,7 @@ if ($Kill) {
     }
 
     "KILLED=$killed`r`nDETAIL=$($detail -join ' | ')" | Out-File -FilePath $killOut -Encoding utf8
+    Log-PS1 "kill 完成: KILLED=$killed DETAIL=$($detail -join ' | ') → $killOut"
     exit 0
 }
 
