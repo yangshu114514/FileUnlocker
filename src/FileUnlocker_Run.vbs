@@ -260,12 +260,14 @@ confirmMsg = "所选 " & total & " 个项目中，被以下 " & occupied & " 个进程占用："
              vbCrLf & vbCrLf & "注意：强制结束进程可能导致未保存数据丢失！" & vbCrLf & _
              "请确认这些进程可以安全结束后，再继续。" & vbCrLf & vbCrLf & "是否强制结束这些进程并解除文件占用？"
 userChoice = shell.Popup(confirmMsg, 0, "FileUnlocker - 确认强制结束", 33)   ' 33 = vbYesNo + vbQuestion
-LogIt "用户确认框返回=" & userChoice & " (6=是)"
+LogIt "用户确认框返回=" & userChoice & " (6=是, 7=否)"
 
-If userChoice <> 6 Then   ' 6 = vbYes
-    LogIt "用户取消，退出"
+' 只有明确点"否"(7)才取消；返回 6(是)、1(默认/回车)等都继续执行
+If userChoice = 7 Then   ' 7 = vbNo
+    LogIt "用户选择'否'，退出"
     WScript.Quit 0
 End If
+LogIt "用户确认，继续 kill"
 
 ' ===================================================
 ' 11. 终止占用进程（Exec 启动 + 轮询等待，带超时保护）
