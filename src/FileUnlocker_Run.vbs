@@ -220,8 +220,9 @@ If userChoice <> 6 Then   ' 6 = vbYes
 End If
 
 ' ===================================================
-' 11. 终止占用进程（同步等待，PS1 内部自动提权）
+' 11. 终止占用进程（Exec 启动 + 轮询等待，带超时保护）
 '     PS1 会检测当前是否管理员，不是则用 runas 提权重启自身。
+'     用 Exec 而非 Run 同步等待，避免 PS1 卡死时结果框永不弹出。
 ' ===================================================
 On Error Resume Next
 fso.DeleteFile killFile, True
@@ -232,8 +233,19 @@ args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden " & _
        "-Kill -PidList " & q & pids & q & " -OutFile " & q & killFile & q
 cmd = q & pwsh & q & " " & args
 
-' 同步等待：内部提权完成后 PS1 会把结果写入 killFile
-code = shell.Run(cmd, 0, True)
+Dim killProc, killWait, killExited
+Set killProc = shell.Exec(cmd)
+killWait = 0
+killExited = False
+Do While killWait < 150   ' 最长等 75 秒（150 × 0.5 秒）
+    WScript.Sleep 500
+    killWait = killWait + 1
+    If fso.FileExists(killFile) Then Exit Do
+    If killProc.Status = 1 Then   ' 1 = 进程已结束
+        killExited = True
+        Exit Do
+    End If
+Loop
 
 Dim killCount, killDetail
 If fso.FileExists(killFile) Then
@@ -242,7 +254,13 @@ If fso.FileExists(killFile) Then
     killDetail = GetValue(output, "DETAIL", "(无返回)")
 Else
     killCount = "0"
-    killDetail = "未生成 kill 结果文件（退出码 " & code & "）"
+    If killWait >= 150 Then
+        killDetail = "等待 kill 结果超时（75 秒）"
+    ElseIf killExited Then
+        killDetail = "kill 脚本已退出但未生成结果文件"
+    Else
+        killDetail = "kill 结果文件未生成"
+    End If
 End If
 
 ' ===================================================
