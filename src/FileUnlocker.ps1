@@ -8,9 +8,9 @@ param(
 
 # All output files are derived from $PSScriptRoot so the tool works no matter
 # which drive/dir it is installed to (C:\Program Files, D:\Tools, etc).
-$root    = $PSScriptRoot
-$handle  = Join-Path $root 'handle.exe'   # 仅作遗留兜底；主检测走 Restart Manager
-$runner  = Join-Path $root 'unlock_system_runner.ps1'
+$root   = $PSScriptRoot
+$handle = Join-Path $root 'handle.exe'
+$runner = Join-Path $root 'unlock_system_runner.ps1'
 
 if (-not $OutFile) { $OutFile = Join-Path $root '.fu_detect.txt' }
 
@@ -32,88 +32,8 @@ function Write-Out($lines) {
     Log-PS1 "Write-Out → $OutFile : $($lines -join ' | ')"
 }
 
-# Restart Manager(rstrtmgr.dll)是微软官方的『文件→占用进程』查询 API，
-# 右键菜单里的"解除占用"就是它驱动的；不依赖 handle.exe，中完整性也能查。
-function Add-RMType {
-    if ([System.AppDomain]::CurrentDomain.GetAssemblies() |
-        Where-Object { $_.GetType('RestartManager', $false) }) { return }
-    $src = @'
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-
-public static class RestartManager {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RM_UNIQUE_PROCESS {
-        public int dwProcessId;
-        public System.Runtime.InteropServices.ComTypes.FILETIME ProcessStartTime;
-    }
-    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
-    public struct RM_PROCESS_INFO {
-        public RM_UNIQUE_PROCESS Process;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=256)] public string strAppName;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=64)]  public string strServiceShortName;
-        public uint ApplicationType; public uint AppStatus; public uint TSSessionId;
-        [MarshalAs(UnmanagedType.Bool)] public bool bRestartable;
-    }
-
-    [DllImport("rstrtmgr.dll", CharSet=CharSet.Unicode)]
-    public static extern int RmStartSession(out uint h, int flags, string key);
-    [DllImport("rstrtmgr.dll", CharSet=CharSet.Unicode)]
-    public static extern int RmRegisterResources(uint h,
-        uint nFiles, string[] filenames,
-        uint nApps, IntPtr apps,
-        uint nServices, string[] services);
-    [DllImport("rstrtmgr.dll", CharSet=CharSet.Unicode)]
-    public static extern int RmGetList(uint h, out uint needed,
-        ref uint count, [In,Out] RM_PROCESS_INFO[] arr, ref uint reasons);
-    [DllImport("rstrtmgr.dll")]
-    public static extern int RmEndSession(uint h);
-
-    public static List<int> GetLockers(string filePath) {
-        var result = new List<int>();
-        if (string.IsNullOrEmpty(filePath)) return result;
-        uint h = 0;
-        if (RmStartSession(out h, 0, Guid.NewGuid().ToString()) != 0) return result;
-        try {
-            if (RmRegisterResources(h, 1, new[]{ filePath }, 0, IntPtr.Zero, 0, null) != 0) return result;
-            uint needed = 0, count = 0, reason = 0;
-            int r = RmGetList(h, out needed, ref count, null, ref reason);
-            if (r != 0 && r != 234) return result;
-            if (needed == 0) return result;
-            var arr = new RM_PROCESS_INFO[needed];
-            count = needed;
-            if (RmGetList(h, out needed, ref count, arr, ref reason) != 0) return result;
-            for (int i = 0; i < count; i++) result.Add(arr[i].Process.dwProcessId);
-            return result;
-        } finally {
-            try { RmEndSession(h); } catch { }
-        }
-    }
-}
-'@
-    try { Add-Type -TypeDefinition $src -ErrorAction Stop | Out-Null }
-    catch { }
-}
-
-# 返回 @{ pids=hashset; method='RM|HANDLE' }
-function Find-LockingProcesses([string[]]$normPaths, [string]$rootDir) {
-    Add-RMType
-    $owners = @{}
-    # 对每一个具体文件跑一次 RM；文件夹在入库前已被展开成子文件，
-    # 绝大多数情况下最多只检测十几个文件，毫秒级。
-    foreach ($p in $normPaths) {
-        if (-not $p -or [string]::IsNullOrWhiteSpace($p)) { continue }
-        foreach ($id in [RestartManager]::GetLockers($p)) {
-            if ($id -gt 0) { $owners[$id] = $true }
-        }
-    }
-    return $owners
-}
-
-    # ===================== DETECT mode =====================
+# ===================== DETECT mode =====================
 if ($Detect) {
-    $DebugStart = Get-Date
     $paths = $Targets -split '[|]' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
 
     $matchSet  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -144,46 +64,54 @@ if ($Detect) {
     # handle.exe 单次启动 ~200ms：目标 ≤2 个时用按名精确查（快且准）；
     # 目标 >2(多选/文件夹)时用一次 -a 全扫描更划算，但必须先把前缀判断做快，
     # 否则系统文件多时每条句柄都要循环全部目标，呈 O(n²) 会拖慢到秒级以上。
-    # 检测走 Restart Manager，handle.exe 仅作遗留不再调用。
-    # matchSet 已被展开成「所有具体文件」，对每个文件调用一次 RM（毫秒级）。
-    # RM 只认真实文件路径。把 matchSet 里的目录剔除,补上递归展开失败的目录本身(防漏)。
-    $targetFiles = [System.Collections.Generic.List[string]]::new()
-    foreach ($m in $matchSet) {
-        if (Test-Path -LiteralPath $m -PathType Container) { continue }   # 目录不进RM
-        if (-not [string]::IsNullOrWhiteSpace($m)) { [void]$targetFiles.Add($m) }
-    }
-    Log-PS1 "detect: paths=$($paths.Count) files=$($targetFiles.Count) folderSet=$($folderSet.Count)"
-    if ($targetFiles.Count -eq 0 -and $paths.Count -gt 0) {
-        # 文件夹展开为空(可能权限不足)时,至少对目录本身跑一次 RM
-        # 某些程序会直接持有目录路径句柄
-        foreach ($tp in $paths) {
-            if (Test-Path -LiteralPath $tp -PathType Container) {
-                [void]$targetFiles.Add($tp.TrimEnd('\'))
+    $usePerFile = ($matchSet.Count -le 2)
+    Log-PS1 "detect: paths=$($paths.Count) matchSet=$($matchSet.Count) folderSet=$($folderSet.Count) perFile=$usePerFile"
+    Push-Location -Path $env:TEMP
+    try {
+        if ($usePerFile) {
+            # 1-2 个纯文件：按名精确查。
+            foreach ($m in $matchSet) {
+                & $handle /accepteula -nobanner $m 2>$null | ForEach-Object {
+                    if ($_ -match 'pid:\s*(\d+)') { $owners[[int]$matches[1]] = $true }
+                }
+            }
+        } else {
+            # 多选 / 文件夹：一次全量 -a 扫描。
+            # 性能关键：folderSet 按盘符分组，每条句柄先 O(1) 取到自己的盘符再比对，
+            # 避免对每条 File 句柄都遍历全部目标路径（O(句柄数 × 目标数)）。
+            $foldersByDrive = @{}
+            foreach ($fd in $folderSet) {
+                if ($fd -match '^([a-zA-Z]):') {
+                    $d = $matches[1].ToUpper()
+                    if (-not $foldersByDrive.ContainsKey($d)) {
+                        $foldersByDrive[$d] = [System.Collections.Generic.List[string]]::new()
+                    }
+                    $foldersByDrive[$d].Add($fd)
+                }
+            }
+            $curPid = 0
+            & $handle /accepteula -nobanner -a 2>$null | ForEach-Object {
+                if ($_ -match 'pid:\s*(\d+)') { $curPid = [int]$matches[1] }
+                elseif ($_ -match '^\s*\S+:\\?\s*File\s+\S*\s+(.+)$' -or
+                        $_ -match '^\s*\S+:\s*File\s+\S*\s+(.+)$') {
+                    $hpath = $matches[1].Trim().TrimEnd('\')
+                    if ($matchSet.Contains($hpath)) {   # O(1) 精确命中
+                        if ($curPid -gt 0) { $owners[$curPid] = $true }
+                    } elseif ($hpath -match '^([a-zA-Z]):') {
+                        $sameDrive = $foldersByDrive[$matches[1].ToUpper()]
+                        foreach ($fd in $sameDrive) {   # 只比同盘符、且数量很少的文件夹
+                            if ($hpath.StartsWith($fd + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                                if ($curPid -gt 0) { $owners[$curPid] = $true }
+                                break
+                            }
+                        }
+                    }
+                }
             }
         }
-        if ($targetFiles.Count -eq 0) {
-            foreach ($tp in $paths) { [void]$targetFiles.Add($tp.TrimEnd('\')) }
-        }
+    } finally {
+        Pop-Location
     }
-    $owners = Find-LockingProcesses -normPaths $targetFiles
-    $durMs = [int]((Get-Date) - $DebugStart).TotalMilliseconds
-    Log-PS1 "detect: RM 耗时=${durMs}ms owners=$($owners.Count)"
-
-    # RM 正常时至少能正确返回空集;若 RM 程序本身失败(极少数机器权限/集成限制),
-    # 当 handle.exe 也读到不足时(owners=0)做一个双写探针 —— 有写锁就是「未被占用」。
-    # 这一层仅用于兜底,避免早期 RM 缺失时出现永远 OK 的 false negative。
-    if ($owners.Count -eq 0 -and $targetFiles.Count -gt 0) {
-        $probe = $targetFiles[0]
-        $hasWriteLock = $false
-        try { [System.IO.File]::Open($probe,'Open','ReadWrite','None').Close() } catch { $hasWriteLock = $true }
-        if ($hasWriteLock) {
-            # 有写锁但 RM 没发现,把当前进程当作占位,让上层告诉用户"有风险"
-            $owners[$pid] = $true
-        }
-    }
-    $usePerFile = $true
-    Push-Location -Path $env:TEMP
-    try { } finally { Pop-Location }
 
     # Collect own process tree so we never suggest killing ourselves.
     $currentPid = [System.Diagnostics.Process]::GetCurrentProcess().Id
