@@ -61,35 +61,51 @@ if ($Detect) {
     #     must run from a writable dir. When launched from the context menu the
     #     cwd is often read-only (C:\Windows\System32) -> force a writable cwd.
     $owners = @{}
-    $handleNeedsSingleScan = ($folderSet.Count -gt 0) -or ($matchSet.Count -gt 2)
-    Log-PS1 "detect: paths=$($paths.Count) matchSet=$($matchSet.Count) folderSet=$($folderSet.Count) singleScan=$handleNeedsSingleScan"
+    # handle.exe 单次启动 ~200ms：目标 ≤2 个时用按名精确查（快且准）；
+    # 目标 >2(多选/文件夹)时用一次 -a 全扫描更划算，但必须先把前缀判断做快，
+    # 否则系统文件多时每条句柄都要循环全部目标，呈 O(n²) 会拖慢到秒级以上。
+    $usePerFile = ($matchSet.Count -le 2)
+    Log-PS1 "detect: paths=$($paths.Count) matchSet=$($matchSet.Count) folderSet=$($folderSet.Count) perFile=$usePerFile"
     Push-Location -Path $env:TEMP
     try {
-        if ($handleNeedsSingleScan) {
-            # Folder or many files: ONE full -a scan + prefix match (P4). For a
-            # multi-select of dozens of files this is far faster than per-file calls.
+        if ($usePerFile) {
+            # 1-2 个纯文件：按名精确查。
+            foreach ($m in $matchSet) {
+                & $handle /accepteula -nobanner $m 2>$null | ForEach-Object {
+                    if ($_ -match 'pid:\s*(\d+)') { $owners[[int]$matches[1]] = $true }
+                }
+            }
+        } else {
+            # 多选 / 文件夹：一次全量 -a 扫描。
+            # 性能关键：folderSet 按盘符分组，每条句柄先 O(1) 取到自己的盘符再比对，
+            # 避免对每条 File 句柄都遍历全部目标路径（O(句柄数 × 目标数)）。
+            $foldersByDrive = @{}
+            foreach ($fd in $folderSet) {
+                if ($fd -match '^([a-zA-Z]):') {
+                    $d = $matches[1].ToUpper()
+                    if (-not $foldersByDrive.ContainsKey($d)) {
+                        $foldersByDrive[$d] = [System.Collections.Generic.List[string]]::new()
+                    }
+                    $foldersByDrive[$d].Add($fd)
+                }
+            }
             $curPid = 0
             & $handle /accepteula -nobanner -a 2>$null | ForEach-Object {
                 if ($_ -match 'pid:\s*(\d+)') { $curPid = [int]$matches[1] }
                 elseif ($_ -match '^\s*\S+:\\?\s*File\s+\S*\s+(.+)$' -or
                         $_ -match '^\s*\S+:\s*File\s+\S*\s+(.+)$') {
                     $hpath = $matches[1].Trim().TrimEnd('\')
-                    $hit = $false
-                    if ($matchSet.Contains($hpath)) { $hit = $true }
-                    else {
-                        foreach ($m in $matchSet) {
-                            if ($hpath.StartsWith($m + '\') -or $hpath.StartsWith($m + '/')) { $hit = $true; break }
+                    if ($matchSet.Contains($hpath)) {   # O(1) 精确命中
+                        if ($curPid -gt 0) { $owners[$curPid] = $true }
+                    } elseif ($hpath -match '^([a-zA-Z]):') {
+                        $sameDrive = $foldersByDrive[$matches[1].ToUpper()]
+                        foreach ($fd in $sameDrive) {   # 只比同盘符、且数量很少的文件夹
+                            if ($hpath.StartsWith($fd + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                                if ($curPid -gt 0) { $owners[$curPid] = $true }
+                                break
+                            }
                         }
                     }
-                    if ($hit -and $curPid -gt 0) { $owners[$curPid] = $true }
-                }
-            }
-        } else {
-            # 1-2 pure files: per-target handle call is precise and avoids the
-            # cross-line pid parsing (P4).
-            foreach ($m in $matchSet) {
-                & $handle /accepteula -nobanner $m 2>$null | ForEach-Object {
-                    if ($_ -match 'pid:\s*(\d+)') { $owners[[int]$matches[1]] = $true }
                 }
             }
         }
