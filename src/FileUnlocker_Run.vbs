@@ -1,13 +1,5 @@
 Option Explicit
 
-' ============================================================
-' FileUnlocker launcher (VBScript).
-' NOTE: All user-facing text is ASCII-only on purpose. This file
-' must stay readable by WSH as ANSI in ANY locale; a single
-' mojibake byte previously caused error 800A0409 / 800A0402.
-' Debug log goes to %TEMP%\FileUnlocker_debug.log
-' ============================================================
-
 Dim fso, shell
 Set fso   = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
@@ -20,10 +12,14 @@ killFile   = scriptDir & "\.fu_kill.txt"
 lockFile   = scriptDir & "\.fu_lock"
 queueFile  = scriptDir & "\.fu_queue.txt"
 
-Dim DEBUG_LOG
+' ===================================================
+' ������־��%TEMP%\FileUnlocker_debug.log��
+' ===================================================
+Dim DEBUG_LOG, debugErr
 DEBUG_LOG = shell.ExpandEnvironmentStrings("%TEMP%") & "\FileUnlocker_debug.log"
 On Error Resume Next
 fso.DeleteFile DEBUG_LOG, True
+debugErr = Err.Number
 On Error GoTo 0
 
 Sub LogIt(msg)
@@ -37,11 +33,13 @@ Sub LogIt(msg)
     On Error GoTo 0
 End Sub
 
-LogIt "===== FileUnlocker VBS start ====="
+LogIt "===== FileUnlocker VBS ���� ====="
 LogIt "ScriptFullName=" & WScript.ScriptFullName
-LogIt "argc=" & WScript.Arguments.Count
+LogIt "��������=" & WScript.Arguments.Count
 
-' ---- 1. drop stale lock/queue older than 30s ----
+' ===================================================
+' 1. ���� 30 ��ǰ�ĳ¾���/���У��ϴα���������
+' ===================================================
 On Error Resume Next
 If fso.FileExists(lockFile) Then
     If DateDiff("s", fso.GetFile(lockFile).DateLastModified, Now) > 30 Then
@@ -51,29 +49,40 @@ If fso.FileExists(lockFile) Then
 End If
 On Error GoTo 0
 
-' ---- 2. need one path argument ----
+' ===================================================
+' 2. �����������봫������һ���ļ�/�ļ���·��
+' ===================================================
 If WScript.Arguments.Count = 0 Then
-    LogIt "no args, show usage"
-    shell.Popup "Usage: right-click a file/folder and choose ""FileUnlocker"".", 60, "FileUnlocker", 64
+    LogIt "����: �޲�������ʾ�÷�"
+    shell.Popup "�÷���" & vbCrLf & _
+                "wscript.exe """ & WScript.ScriptFullName & """ ""Ŀ��·��""" & vbCrLf & vbCrLf & _
+                "����ͨ���Ҽ��˵� -������ļ�ռ�á����á�", _
+                60, "FileUnlocker - ʹ��˵��", 64
     WScript.Quit 1
 End If
-LogIt "arg0=" & WScript.Arguments(0)
+LogIt "����0=" & WScript.Arguments(0)
 
-' ---- 3. enqueue our path (multi-select launches one instance per file) ----
+' ===================================================
+' 3. ��ѡ�ϲ������Լ���·��д�����
+'    �Ҽ���ѡʱ����Դ���������ÿ���ļ�������һ�α��ű���
+'    ��˰�·���ȴ�������ļ�������Э����һ���Դ�����
+' ===================================================
 Dim qf
 On Error Resume Next
-Set qf = fso.OpenTextFile(queueFile, 8, True)
+Set qf = fso.OpenTextFile(queueFile, 8, True)   ' 8 = ForAppending���������򴴽�
 If Err.Number = 0 Then
     qf.WriteLine(Trim(CStr(WScript.Arguments(0))))
     qf.Close
 End If
 On Error GoTo 0
 
-' ---- 4. coordinator election: first instance grabbing the lock wins ----
+' ===================================================
+' 4. ��������һ���ɹ��������ļ�����Э���ߣ����������˳�
+' ===================================================
 Dim isCoordinator, lockHandle
 isCoordinator = False
 On Error Resume Next
-Set lockHandle = fso.OpenTextFile(lockFile, 2, True)
+Set lockHandle = fso.OpenTextFile(lockFile, 2, True)   ' 2 = ForWriting����ռ��
 If Err.Number = 0 Then
     isCoordinator = True
     lockHandle.WriteLine("locked")
@@ -81,13 +90,15 @@ End If
 On Error GoTo 0
 
 If Not isCoordinator Then
-    LogIt "not coordinator, exit (coordinator will handle us)"
+    LogIt "��Э���ߣ��˳�������Э���ߴ�����"
     WScript.Quit 0
 End If
-LogIt "became coordinator"
+LogIt "��ʵ����ΪЭ����"
 
-' ---- 5. wait until queue stable (2 consecutive equal counts) ----
-Dim lastCount, curCount, stableFor, qf2, ln
+' ===================================================
+' 5. Э���ߣ��ȶ��в������������ 3 ���ȶ����ڣ�
+' ===================================================
+Dim lastCount, curCount, stableFor, qf2, tmpLine
 lastCount = -1
 stableFor = 0
 curCount  = 0
@@ -110,8 +121,10 @@ Do While stableFor < 2
     End If
 Loop
 
-' ---- 6. dedupe queued paths ----
-Dim dict
+' ===================================================
+' 6. �����в�ȥ�أ�Ȼ����������/��
+' ===================================================
+Dim dict, ln
 Set dict = CreateObject("Scripting.Dictionary")
 dict.CompareMode = 1
 If fso.FileExists(queueFile) Then
@@ -130,12 +143,14 @@ fso.DeleteFile lockFile, True
 On Error GoTo 0
 
 If dict.Count = 0 Then
-    LogIt "empty queue, exit"
+    LogIt "����Ϊ�գ��˳�"
     WScript.Quit 1
 End If
-LogIt "collected " & dict.Count & " path(s)"
+LogIt "�ռ��� " & dict.Count & " ��·��"
 
-' ---- 7. join paths with | ----
+' ===================================================
+' 7. ƴ������·����| �ָ���
+' ===================================================
 Dim sb, k
 sb = ""
 For Each k In dict.Keys
@@ -143,37 +158,44 @@ For Each k In dict.Keys
     sb = sb & k
 Next
 
-' ---- 8. locate pwsh.exe ----
-Dim pwsh, probe
+' ===================================================
+' 8. ��λ pwsh.exe
+' ===================================================
+Dim pwsh, probe, proc, rawOut, firstLine
 pwsh = ""
 For Each probe In Array("C:\Program Files\PowerShell\7\pwsh.exe", "C:\Program Files (x86)\PowerShell\7\pwsh.exe")
     If fso.FileExists(probe) Then pwsh = probe : Exit For
 Next
 If pwsh = "" Then
     On Error Resume Next
-    Dim wproc : Set wproc = shell.Exec("where pwsh.exe 2>nul")
+    Set proc = shell.Exec("where pwsh.exe 2>nul")
     If Err.Number = 0 Then
-        pwsh = Trim(Split(wproc.StdOut.ReadAll(), vbCrLf)(0))
+        rawOut = proc.StdOut.ReadAll()
+        firstLine = Split(rawOut, vbCrLf)(0)
+        pwsh = Trim(firstLine)
     End If
     On Error GoTo 0
 End If
 
 If pwsh = "" Or Not fso.FileExists(pwsh) Then
-    LogIt "pwsh.exe not found"
-    shell.Popup "PowerShell 7 (pwsh.exe) not found." & vbCrLf & _
-                "Install it first: https://github.com/PowerShell/PowerShell/releases", _
-                60, "FileUnlocker - missing dependency", 48
+    LogIt "����: �Ҳ��� pwsh.exe"
+    shell.Popup "�Ҳ��� PowerShell 7 (pwsh.exe)��" & vbCrLf & vbCrLf & _
+                "���Ȱ�װ��" & vbCrLf & "https://github.com/PowerShell/PowerShell/releases", _
+                60, "FileUnlocker - ȱ������", 48
     WScript.Quit 1
 End If
 LogIt "pwsh=" & pwsh
 
 If Not fso.FileExists(scriptPath) Then
-    LogIt "ps1 missing: " & scriptPath
-    shell.Popup "Main script not found:" & vbCrLf & scriptPath, 60, "FileUnlocker - error", 48
+    LogIt "����: �Ҳ������ű� " & scriptPath
+    shell.Popup "�Ҳ������ű���" & vbCrLf & scriptPath, 60, "FileUnlocker - ����", 48
     WScript.Quit 1
 End If
+LogIt "scriptPath=" & scriptPath
 
-' ---- 9. run detect (synchronous) ----
+' ===================================================
+' 9. ���� FileUnlocker.ps1 ����ռ�ü�⣨ͬ���ȴ���
+' ===================================================
 Dim q, args, cmd, code, output
 q = Chr(34)
 On Error Resume Next
@@ -184,54 +206,74 @@ args = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden "
        "-File " & q & scriptPath & q & " " & _
        "-Detect -Targets " & q & sb & q & " -OutFile " & q & detectFile & q
 cmd = q & pwsh & q & " " & args
-LogIt "start detect"
+LogIt "��ʼ detect"
 LogIt "DETECT_CMD=" & cmd
 code = shell.Run(cmd, 0, True)
-LogIt "detect exit code=" & code
+LogIt "detect �����˳���=" & code
 
 If code <> 0 Then
-    LogIt "detect failed, code=" & code
-    shell.Popup "Detect failed, exit code: " & code, 60, "FileUnlocker - error", 48
+    LogIt "detect ʧ�ܣ��˳���=" & code
+    If fso.FileExists(detectFile) Then
+        output = ReadUtf8File(detectFile)
+        LogIt "detect �����ļ�����=" & output
+        If InStr(output, "ERROR=") > 0 Then
+            Dim errLine
+            For Each errLine In Split(output, vbCrLf)
+                If Left(errLine, 6) = "ERROR=" Then
+                    shell.Popup "���ʧ�ܣ�" & vbCrLf & Mid(errLine, 7), 60, "FileUnlocker - ����", 48
+                    WScript.Quit 1
+                End If
+            Next
+        End If
+    End If
+    shell.Popup "���ű��쳣�˳����˳���: " & code, 60, "FileUnlocker - ����", 48
     WScript.Quit 1
 End If
 
 If Not fso.FileExists(detectFile) Then
-    LogIt "no detect output file"
-    shell.Popup "No detect result was produced.", 60, "FileUnlocker - error", 48
+    LogIt "����: detect δ���ɽ���ļ�"
+    shell.Popup "δ�����ɼ�����ļ����ű�����δ��ȷִ�С�", 60, "FileUnlocker - ����", 48
     WScript.Quit 1
 End If
 
 output = ReadUtf8File(detectFile)
-LogIt "detect result: " & output
+LogIt "detect ���: " & output
 
-' ---- 10. parse and show ----
+' ===================================================
+' 10. �����������չʾ���û�
+' ===================================================
 Dim total, occupied, pids, names
 total    = GetValue(output, "TARGETS", "?")
 occupied = GetValue(output, "OCCUPIED", "0")
 pids     = GetValue(output, "PIDS", "")
 names    = GetValue(output, "PROCNAMES", "")
 
-If occupied = "0" Or pids = "" Then
-    shell.Popup "Selected " & total & " item(s) are NOT locked." & vbCrLf & vbCrLf & _
-                "You can delete/move/rename them directly.", _
-                60, "FileUnlocker - not locked", 64
+If occupied = "0" Then
+    shell.Popup "��ѡ " & total & " ����Ŀ��δ��ռ�á�" & vbCrLf & vbCrLf & _
+                "��ֱ�ӽ���ɾ��/�ƶ�/��������", _
+                60, "FileUnlocker - δ��ռ��", 64
     WScript.Quit 0
 End If
 
 Dim confirmMsg, userChoice
-confirmMsg = "Found " & occupied & " locking process(es):" & vbCrLf & vbCrLf & names & _
-             vbCrLf & vbCrLf & "WARNING: force-killing may lose unsaved data." & vbCrLf & _
-             "Kill them now?"
-userChoice = shell.Popup(confirmMsg, 0, "FileUnlocker - confirm kill", 33)   ' 33 = vbYesNo + vbQuestion
-LogIt "confirm result=" & userChoice & " (6=yes, 7=no)"
+confirmMsg = "��ѡ " & total & " ����Ŀ�У������� " & occupied & " ������ռ�ã�" & vbCrLf & vbCrLf & names & _
+             vbCrLf & vbCrLf & "ע�⣺ǿ�ƽ������̿��ܵ���δ�������ݶ�ʧ��" & vbCrLf & _
+             "��ȷ����Щ���̿��԰�ȫ�������ټ�����" & vbCrLf & vbCrLf & "�Ƿ�ǿ�ƽ�����Щ���̲�����ļ�ռ�ã�"
+userChoice = shell.Popup(confirmMsg, 0, "FileUnlocker - ȷ��ǿ�ƽ���", 33)   ' 33 = vbYesNo + vbQuestion
+LogIt "�û�ȷ�Ͽ򷵻�=" & userChoice & " (6=��, 7=��)"
 
-If userChoice <> 6 Then
-    LogIt "user chose NO (or closed), exit"
+' ֻ����ȷ��"��"(7)��ȡ�������� 6(��)��1(Ĭ��/�س�)�ȶ�����ִ��
+If userChoice = 7 Then   ' 7 = vbNo
+    LogIt "�û�ѡ��'��'���˳�"
     WScript.Quit 0
 End If
-LogIt "user confirmed, start kill"
+LogIt "�û�ȷ�ϣ����� kill"
 
-' ---- 11. kill: run ps1 asynchronously, poll for result file ----
+' ===================================================
+' 11. ��ֹռ�ý��̣�Exec ���� + ��ѯ�ȴ�������ʱ������
+'     PS1 ���⵱ǰ�Ƿ����Ա���������� runas ��Ȩ����������
+'     �� Exec ���� Run ͬ���ȴ������� PS1 ����ʱ���������������
+' ===================================================
 On Error Resume Next
 fso.DeleteFile killFile, True
 On Error GoTo 0
@@ -240,63 +282,81 @@ args = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden "
        "-File " & q & scriptPath & q & " " & _
        "-Kill -PidList " & q & pids & q & " -OutFile " & q & killFile & q
 cmd = q & pwsh & q & " " & args
-LogIt "start kill, PIDS=[" & pids & "]"
+LogIt "��ʼ kill��PIDS=[" & pids & "]"
 LogIt "KILL_CMD=" & cmd
 
-Dim killProc
-Set killProc = Nothing
+Dim killProc, killWait, killExited
 On Error Resume Next
 Set killProc = shell.Exec(cmd)
 If Err.Number <> 0 Then
-    LogIt "Exec kill failed: " & Err.Number & " " & Err.Description
+    LogIt "Exec ���� kill ʧ�ܣ�����=" & Err.Number & " " & Err.Description
+Else
+    LogIt "Exec ���� kill �ɹ�"
 End If
 On Error GoTo 0
-
-Dim killWait, killCount, killDetail
 killWait = 0
-Do While killWait < 300   ' up to 150s (elevation prompt may take a while)
+killExited = False
+Do While killWait < 150   ' ��� 75 �루150 �� 0.5 �룩
     WScript.Sleep 500
     killWait = killWait + 1
     If fso.FileExists(killFile) Then
-        LogIt "kill result file appeared after " & killWait & " x 0.5s"
+        LogIt "kill ����ļ����֣��ȴ� " & killWait & " �Ρ�0.5s��"
         Exit Do
     End If
+    On Error Resume Next
+    If killProc.Status = 1 Then   ' 1 = �����ѽ���
+        killExited = True
+        On Error GoTo 0
+        LogIt "kill �������˳�����δ�ȵ�����ļ����ȴ� " & killWait & " �Ρ�0.5s��"
+        Exit Do
+    End If
+    On Error GoTo 0
 Loop
-If killWait >= 300 Then LogIt "kill wait timeout (150s)"
+If killWait >= 150 Then LogIt "kill �ȴ���ʱ��75 �룩"
+LogIt "kill ��ѯ����: killWait=" & killWait & " killExited=" & killExited
 
+Dim killCount, killDetail
 If fso.FileExists(killFile) Then
     output = ReadUtf8File(killFile)
-    killCount  = GetValue(output, "KILLED", "?")
-    killDetail = GetValue(output, "DETAIL", "(no detail)")
-    LogIt "kill result: " & output
+    killCount = GetValue(output, "KILLED", "?")
+    killDetail = GetValue(output, "DETAIL", "(�޷���)")
+    LogIt "kill ���: " & output
 Else
     killCount = "0"
-    If killWait >= 300 Then
-        killDetail = "Timed out waiting for kill result (150s)."
+    If killWait >= 150 Then
+        killDetail = "�ȴ� kill �����ʱ��75 �룩"
+    ElseIf killExited Then
+        killDetail = "kill �ű����˳���δ���ɽ���ļ�"
     Else
-        killDetail = "Kill script produced no result file."
+        killDetail = "kill ����ļ�δ����"
     End If
-    LogIt "kill failed: " & killDetail
+    LogIt "kill ʧ��: " & killDetail
 End If
 
-' ---- 12. clean temp files ----
+' ===================================================
+' 12. ������ʱ�ļ�
+' ===================================================
 On Error Resume Next
 fso.DeleteFile detectFile, True
 fso.DeleteFile killFile, True
 On Error GoTo 0
 
-' ---- 13. ALWAYS show a final result popup so the user gets feedback ----
+' ===================================================
+' 13. ��ʾ���ս��
+' ===================================================
 Dim resultMsg
-resultMsg = "Done. Force-terminated " & killCount & " process(es)." & vbCrLf & vbCrLf & _
-            "Detail:" & vbCrLf & killDetail
-LogIt "final result: KILLED=" & killCount
-shell.Popup resultMsg, 60, "FileUnlocker - result", 64
-LogIt "===== VBS end ====="
+resultMsg = "������ɣ���ǿ�ƽ��� " & killCount & " �����̡�" & vbCrLf & vbCrLf & _
+            "��ϸ��Ϣ��" & vbCrLf & killDetail
+LogIt "�������ս����: " & resultMsg
+shell.Popup resultMsg, 60, "FileUnlocker - ���", 64
+LogIt "===== VBS �������� ====="
 
 WScript.Quit 0
 
 
-' ---- helper: read KEY=VALUE from result text ----
+' ===================================================
+' ������������ KEY=VALUE �б���ȡֵ
+' ===================================================
 Function GetValue(text, key, defaultValue)
     Dim lines, line
     If text = "" Then GetValue = defaultValue : Exit Function
@@ -312,11 +372,13 @@ Function GetValue(text, key, defaultValue)
 End Function
 
 
-' ---- helper: read UTF-8 file written by the ps1 ----
+' ===================================================
+' ������������ UTF-8 ��ȡ�ļ���PS1 �� Out-File -Encoding utf8 д�룩
+' ===================================================
 Function ReadUtf8File(filePath)
     Dim stream
     Set stream = CreateObject("ADODB.Stream")
-    stream.Type = 2
+    stream.Type = 2            ' adTypeText
     stream.Charset = "utf-8"
     stream.Open
     stream.LoadFromFile filePath
