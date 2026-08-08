@@ -1,9 +1,16 @@
 Option Explicit
 
-Dim fso, shell, shApp
+' ============================================================
+' FileUnlocker launcher (VBScript).
+' NOTE: All user-facing text is ASCII-only on purpose. This file
+' must stay readable by WSH as ANSI in ANY locale; a single
+' mojibake byte previously caused error 800A0409 / 800A0402.
+' Debug log goes to %TEMP%\FileUnlocker_debug.log
+' ============================================================
+
+Dim fso, shell
 Set fso   = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
-Set shApp = CreateObject("Shell.Application")
 
 Dim scriptDir, scriptPath, detectFile, killFile, lockFile, queueFile
 scriptDir  = fso.GetParentFolderName(WScript.ScriptFullName)
@@ -13,9 +20,28 @@ killFile   = scriptDir & "\.fu_kill.txt"
 lockFile   = scriptDir & "\.fu_lock"
 queueFile  = scriptDir & "\.fu_queue.txt"
 
-' ===================================================
-' 1. 清理 30 秒前的陈旧锁/队列（上次崩溃残留）
-' ===================================================
+Dim DEBUG_LOG
+DEBUG_LOG = shell.ExpandEnvironmentStrings("%TEMP%") & "\FileUnlocker_debug.log"
+On Error Resume Next
+fso.DeleteFile DEBUG_LOG, True
+On Error GoTo 0
+
+Sub LogIt(msg)
+    Dim f
+    On Error Resume Next
+    Set f = fso.OpenTextFile(DEBUG_LOG, 8, True)
+    If Err.Number = 0 Then
+        f.WriteLine CStr(Now) & " | " & msg
+        f.Close
+    End If
+    On Error GoTo 0
+End Sub
+
+LogIt "===== FileUnlocker VBS start ====="
+LogIt "ScriptFullName=" & WScript.ScriptFullName
+LogIt "argc=" & WScript.Arguments.Count
+
+' ---- 1. drop stale lock/queue older than 30s ----
 On Error Resume Next
 If fso.FileExists(lockFile) Then
     If DateDiff("s", fso.GetFile(lockFile).DateLastModified, Now) > 30 Then
@@ -25,50 +51,43 @@ If fso.FileExists(lockFile) Then
 End If
 On Error GoTo 0
 
-' ===================================================
-' 2. 检查参数：必须传入至少一个文件/文件夹路径
-' ===================================================
+' ---- 2. need one path argument ----
 If WScript.Arguments.Count = 0 Then
-    shell.Popup "用法：" & vbCrLf & _
-                "wscript.exe """ & WScript.ScriptFullName & """ ""目标路径""" & vbCrLf & vbCrLf & _
-                "建议通过右键菜单 -“解除文件占用”调用。", _
-                60, "FileUnlocker - 使用说明", 64
+    LogIt "no args, show usage"
+    shell.Popup "Usage: right-click a file/folder and choose ""FileUnlocker"".", 60, "FileUnlocker", 64
     WScript.Quit 1
 End If
+LogIt "arg0=" & WScript.Arguments(0)
 
-' ===================================================
-' 3. 多选合并：把自己的路径写入队列
-'    右键多选时，资源管理器会对每个文件各调用一次本脚本，
-'    因此把路径先存进队列文件，再由协调者一次性处理。
-' ===================================================
+' ---- 3. enqueue our path (multi-select launches one instance per file) ----
 Dim qf
 On Error Resume Next
-Set qf = fso.OpenTextFile(queueFile, 8, True)   ' 8 = ForAppending，不存在则创建
+Set qf = fso.OpenTextFile(queueFile, 8, True)
 If Err.Number = 0 Then
     qf.WriteLine(Trim(CStr(WScript.Arguments(0))))
     qf.Close
 End If
 On Error GoTo 0
 
-' ===================================================
-' 4. 抢锁：第一个成功创建锁文件的是协调者，其余立即退出
-' ===================================================
+' ---- 4. coordinator election: first instance grabbing the lock wins ----
 Dim isCoordinator, lockHandle
 isCoordinator = False
 On Error Resume Next
-Set lockHandle = fso.OpenTextFile(lockFile, 2, True)   ' 2 = ForWriting，独占打开
+Set lockHandle = fso.OpenTextFile(lockFile, 2, True)
 If Err.Number = 0 Then
     isCoordinator = True
     lockHandle.WriteLine("locked")
 End If
 On Error GoTo 0
 
-If Not isCoordinator Then WScript.Quit 0
+If Not isCoordinator Then
+    LogIt "not coordinator, exit (coordinator will handle us)"
+    WScript.Quit 0
+End If
+LogIt "became coordinator"
 
-' ===================================================
-' 5. 协调者：等队列不再增长（最多 3 个稳定周期）
-' ===================================================
-Dim lastCount, curCount, stableFor, qf2, tmpLine
+' ---- 5. wait until queue stable (2 consecutive equal counts) ----
+Dim lastCount, curCount, stableFor, qf2, ln
 lastCount = -1
 stableFor = 0
 curCount  = 0
@@ -91,10 +110,8 @@ Do While stableFor < 2
     End If
 Loop
 
-' ===================================================
-' 6. 读队列并去重，然后清理队列/锁
-' ===================================================
-Dim dict, ln
+' ---- 6. dedupe queued paths ----
+Dim dict
 Set dict = CreateObject("Scripting.Dictionary")
 dict.CompareMode = 1
 If fso.FileExists(queueFile) Then
@@ -112,11 +129,13 @@ fso.DeleteFile queueFile, True
 fso.DeleteFile lockFile, True
 On Error GoTo 0
 
-If dict.Count = 0 Then WScript.Quit 1
+If dict.Count = 0 Then
+    LogIt "empty queue, exit"
+    WScript.Quit 1
+End If
+LogIt "collected " & dict.Count & " path(s)"
 
-' ===================================================
-' 7. 拼接所有路径（| 分隔）
-' ===================================================
+' ---- 7. join paths with | ----
 Dim sb, k
 sb = ""
 For Each k In dict.Keys
@@ -124,40 +143,37 @@ For Each k In dict.Keys
     sb = sb & k
 Next
 
-' ===================================================
-' 8. 定位 pwsh.exe
-' ===================================================
-Dim pwsh, probe, proc, rawOut, firstLine
+' ---- 8. locate pwsh.exe ----
+Dim pwsh, probe
 pwsh = ""
 For Each probe In Array("C:\Program Files\PowerShell\7\pwsh.exe", "C:\Program Files (x86)\PowerShell\7\pwsh.exe")
     If fso.FileExists(probe) Then pwsh = probe : Exit For
 Next
 If pwsh = "" Then
     On Error Resume Next
-    Set proc = shell.Exec("where pwsh.exe 2>nul")
+    Dim wproc : Set wproc = shell.Exec("where pwsh.exe 2>nul")
     If Err.Number = 0 Then
-        rawOut = proc.StdOut.ReadAll()
-        firstLine = Split(rawOut, vbCrLf)(0)
-        pwsh = Trim(firstLine)
+        pwsh = Trim(Split(wproc.StdOut.ReadAll(), vbCrLf)(0))
     End If
     On Error GoTo 0
 End If
 
 If pwsh = "" Or Not fso.FileExists(pwsh) Then
-    shell.Popup "找不到 PowerShell 7 (pwsh.exe)。" & vbCrLf & vbCrLf & _
-                "请先安装：" & vbCrLf & "https://github.com/PowerShell/PowerShell/releases", _
-                60, "FileUnlocker - 缺少依赖", 48
+    LogIt "pwsh.exe not found"
+    shell.Popup "PowerShell 7 (pwsh.exe) not found." & vbCrLf & _
+                "Install it first: https://github.com/PowerShell/PowerShell/releases", _
+                60, "FileUnlocker - missing dependency", 48
     WScript.Quit 1
 End If
+LogIt "pwsh=" & pwsh
 
 If Not fso.FileExists(scriptPath) Then
-    shell.Popup "找不到主脚本：" & vbCrLf & scriptPath, 60, "FileUnlocker - 错误", 48
+    LogIt "ps1 missing: " & scriptPath
+    shell.Popup "Main script not found:" & vbCrLf & scriptPath, 60, "FileUnlocker - error", 48
     WScript.Quit 1
 End If
 
-' ===================================================
-' 9. 调用 FileUnlocker.ps1 进行占用检测（同步等待）
-' ===================================================
+' ---- 9. run detect (synchronous) ----
 Dim q, args, cmd, code, output
 q = Chr(34)
 On Error Resume Next
@@ -168,63 +184,54 @@ args = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden "
        "-File " & q & scriptPath & q & " " & _
        "-Detect -Targets " & q & sb & q & " -OutFile " & q & detectFile & q
 cmd = q & pwsh & q & " " & args
+LogIt "start detect"
+LogIt "DETECT_CMD=" & cmd
 code = shell.Run(cmd, 0, True)
+LogIt "detect exit code=" & code
 
 If code <> 0 Then
-    If fso.FileExists(detectFile) Then
-        output = ReadUtf8File(detectFile)
-        If InStr(output, "ERROR=") > 0 Then
-            Dim errLine
-            For Each errLine In Split(output, vbCrLf)
-                If Left(errLine, 6) = "ERROR=" Then
-                    shell.Popup "检测失败：" & vbCrLf & Mid(errLine, 7), 60, "FileUnlocker - 错误", 48
-                    WScript.Quit 1
-                End If
-            Next
-        End If
-    End If
-    shell.Popup "检测脚本异常退出，退出码: " & code, 60, "FileUnlocker - 错误", 48
+    LogIt "detect failed, code=" & code
+    shell.Popup "Detect failed, exit code: " & code, 60, "FileUnlocker - error", 48
     WScript.Quit 1
 End If
 
 If Not fso.FileExists(detectFile) Then
-    shell.Popup "未能生成检测结果文件，脚本可能未正确执行。", 60, "FileUnlocker - 错误", 48
+    LogIt "no detect output file"
+    shell.Popup "No detect result was produced.", 60, "FileUnlocker - error", 48
     WScript.Quit 1
 End If
 
 output = ReadUtf8File(detectFile)
+LogIt "detect result: " & output
 
-' ===================================================
-' 10. 解析检测结果，展示给用户
-' ===================================================
+' ---- 10. parse and show ----
 Dim total, occupied, pids, names
 total    = GetValue(output, "TARGETS", "?")
 occupied = GetValue(output, "OCCUPIED", "0")
 pids     = GetValue(output, "PIDS", "")
 names    = GetValue(output, "PROCNAMES", "")
 
-If occupied = "0" Then
-    shell.Popup "所选 " & total & " 个项目均未被占用。" & vbCrLf & vbCrLf & _
-                "可直接进行删除/移动/重命名。", _
-                60, "FileUnlocker - 未被占用", 64
+If occupied = "0" Or pids = "" Then
+    shell.Popup "Selected " & total & " item(s) are NOT locked." & vbCrLf & vbCrLf & _
+                "You can delete/move/rename them directly.", _
+                60, "FileUnlocker - not locked", 64
     WScript.Quit 0
 End If
 
 Dim confirmMsg, userChoice
-confirmMsg = "所选 " & total & " 个项目中，被以下 " & occupied & " 个进程占用：" & vbCrLf & vbCrLf & names & _
-             vbCrLf & vbCrLf & "注意：强制结束进程可能导致未保存数据丢失！" & vbCrLf & _
-             "请确认这些进程可以安全结束后，再继续。" & vbCrLf & vbCrLf & "是否强制结束这些进程并解除文件占用？"
-userChoice = shell.Popup(confirmMsg, 0, "FileUnlocker - 确认强制结束", 33)   ' 33 = vbYesNo + vbQuestion
+confirmMsg = "Found " & occupied & " locking process(es):" & vbCrLf & vbCrLf & names & _
+             vbCrLf & vbCrLf & "WARNING: force-killing may lose unsaved data." & vbCrLf & _
+             "Kill them now?"
+userChoice = shell.Popup(confirmMsg, 0, "FileUnlocker - confirm kill", 33)   ' 33 = vbYesNo + vbQuestion
+LogIt "confirm result=" & userChoice & " (6=yes, 7=no)"
 
-If userChoice <> 6 Then   ' 6 = vbYes
+If userChoice <> 6 Then
+    LogIt "user chose NO (or closed), exit"
     WScript.Quit 0
 End If
+LogIt "user confirmed, start kill"
 
-' ===================================================
-' 11. 终止占用进程（需管理员权限，用 runas 提权执行）
-'     Register-ScheduledTask 以 SYSTEM 身份运行需要管理员权限，
-'     普通右键（中等完整性）下会静默失败，因此必须提权。
-' ===================================================
+' ---- 11. kill: run ps1 asynchronously, poll for result file ----
 On Error Resume Next
 fso.DeleteFile killFile, True
 On Error GoTo 0
@@ -232,54 +239,64 @@ On Error GoTo 0
 args = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden " & _
        "-File " & q & scriptPath & q & " " & _
        "-Kill -PidList " & q & pids & q & " -OutFile " & q & killFile & q
+cmd = q & pwsh & q & " " & args
+LogIt "start kill, PIDS=[" & pids & "]"
+LogIt "KILL_CMD=" & cmd
 
-shApp.ShellExecute pwsh, args, "", "runas", 0
+Dim killProc
+Set killProc = Nothing
+On Error Resume Next
+Set killProc = shell.Exec(cmd)
+If Err.Number <> 0 Then
+    LogIt "Exec kill failed: " & Err.Number & " " & Err.Description
+End If
+On Error GoTo 0
 
-' 轮询等待 kill 结果文件（最长 60 秒）
-Dim waited, ok
-waited = 0
-ok = False
-Do While waited < 120
+Dim killWait, killCount, killDetail
+killWait = 0
+Do While killWait < 300   ' up to 150s (elevation prompt may take a while)
     WScript.Sleep 500
-    waited = waited + 1
+    killWait = killWait + 1
     If fso.FileExists(killFile) Then
-        ok = True
+        LogIt "kill result file appeared after " & killWait & " x 0.5s"
         Exit Do
     End If
 Loop
+If killWait >= 300 Then LogIt "kill wait timeout (150s)"
 
-Dim killCount, killDetail
-If ok Then
+If fso.FileExists(killFile) Then
     output = ReadUtf8File(killFile)
-    killCount = GetValue(output, "KILLED", "?")
-    killDetail = GetValue(output, "DETAIL", "(无返回)")
+    killCount  = GetValue(output, "KILLED", "?")
+    killDetail = GetValue(output, "DETAIL", "(no detail)")
+    LogIt "kill result: " & output
 Else
     killCount = "0"
-    killDetail = "未生成 kill 结果文件（可能提权被拒绝或超时）"
+    If killWait >= 300 Then
+        killDetail = "Timed out waiting for kill result (150s)."
+    Else
+        killDetail = "Kill script produced no result file."
+    End If
+    LogIt "kill failed: " & killDetail
 End If
 
-' ===================================================
-' 12. 清理临时文件
-' ===================================================
+' ---- 12. clean temp files ----
 On Error Resume Next
 fso.DeleteFile detectFile, True
 fso.DeleteFile killFile, True
 On Error GoTo 0
 
-' ===================================================
-' 13. 显示最终结果
-' ===================================================
+' ---- 13. ALWAYS show a final result popup so the user gets feedback ----
 Dim resultMsg
-resultMsg = "处理完成！共强制结束 " & killCount & " 个进程。" & vbCrLf & vbCrLf & _
-            "详细信息：" & vbCrLf & killDetail
-shell.Popup resultMsg, 60, "FileUnlocker - 完成", 64
+resultMsg = "Done. Force-terminated " & killCount & " process(es)." & vbCrLf & vbCrLf & _
+            "Detail:" & vbCrLf & killDetail
+LogIt "final result: KILLED=" & killCount
+shell.Popup resultMsg, 60, "FileUnlocker - result", 64
+LogIt "===== VBS end ====="
 
 WScript.Quit 0
 
 
-' ===================================================
-' 辅助函数：从 KEY=VALUE 列表中取值
-' ===================================================
+' ---- helper: read KEY=VALUE from result text ----
 Function GetValue(text, key, defaultValue)
     Dim lines, line
     If text = "" Then GetValue = defaultValue : Exit Function
@@ -295,13 +312,11 @@ Function GetValue(text, key, defaultValue)
 End Function
 
 
-' ===================================================
-' 辅助函数：按 UTF-8 读取文件（PS1 用 Out-File -Encoding utf8 写入）
-' ===================================================
+' ---- helper: read UTF-8 file written by the ps1 ----
 Function ReadUtf8File(filePath)
     Dim stream
     Set stream = CreateObject("ADODB.Stream")
-    stream.Type = 2            ' adTypeText
+    stream.Type = 2
     stream.Charset = "utf-8"
     stream.Open
     stream.LoadFromFile filePath
