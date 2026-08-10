@@ -46,7 +46,7 @@ def _mbox(text: str, title: str, flags: int) -> int:
     """
     # MB_TOPMOST 让窗口钉在最上层
     # MB_SETFOREGROUND 让弹窗抢走当前焦点,立即出现
-    return _mbox(0, text, title, flags | MB_TOPMOST | MB_SETFOREGROUND)
+    return _MBOX(0, text, title, flags | MB_TOPMOST | MB_SETFOREGROUND)
 
 
 # ---------- 公共 API ----------
