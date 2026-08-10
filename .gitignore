@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*$py.class
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+*.spec
+
+# PyInstaller 输出
+PyInstaller/
+.pyinstaller-cache/
+
+# 构建产物(如果用户本地产出)
+# 注意:为了 jsDelivr CDN 分发,release 用的英文副本 FileUnlocker.exe 也提交进仓库
+文件解锁器.exe
+_lock_test.txt
+_real lock test.txt
+
+# 临时文件
+*.log
+*.tmp
+*.bak
+.fu_*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 操作系统
+Thumbs.db
+desktop.ini

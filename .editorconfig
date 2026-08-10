@@ -1,0 +1,18 @@
+# 编辑器配置,确保所有源码统一 UTF-8 with BOM,避免再次出现乱码事故
+root = true
+
+[*]
+charset = utf-8-bom
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.bat]
+charset = utf-8
+end_of_line = crlf
+
+[*.md]
+charset = utf-8
+trim_trailing_whitespace = false

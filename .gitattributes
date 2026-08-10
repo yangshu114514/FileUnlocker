@@ -1,0 +1,10 @@
+* text=auto eol=crlf
+
+*.py    text eol=crlf
+*.bat   text eol=crlf
+*.md    text eol=lf
+*.txt   text eol=crlf
+
+# 二进制
+*.exe   binary
+*.ico   binary
