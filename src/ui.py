@@ -24,6 +24,8 @@ MB_ICONINFORMATION = 0x00000040
 MB_TOPMOST = 0x00040000
 MB_SETFOREGROUND = 0x00010000
 MB_DEFAULT_DESKTOP_ONLY = 0x00020000
+MB_SYSTEMMODAL = 0x00001000     # 系统模态,弹窗一定显示在所有窗口之上
+MB_TASKMODAL = 0x00002000
 MB_RIGHT = 0x00080000
 MB_RTLREADING = 0x00100000
 
@@ -39,14 +41,25 @@ _MBOX.restype = ctypes.c_int
 
 
 def _mbox(text: str, title: str, flags: int) -> int:
-    """统一调用 MessageBoxW,保证置顶且抢焦点。
+    """统一调用 MessageBoxW。
 
-    否则 exe 从右键菜单起来时,弹窗被资源管理器盖在后面,
-    用户根本看不到。
+    不像 VBS,exe 是从右键菜单启动的子进程,弹窗默认可能被 explorer 盖后面。
+    MB_TASKMODAL 让弹窗成为"顶级模态"。
+    MB_SETFOREGROUND 强制抓住焦点。
+    MB_TOPMOST 让它在最上层。
+    MB_SYSTEMMODAL 是最强的(系统模态),适合关键确认。
+
+    我们加 MB_SYSTEMMODAL,确保一定能弹出并抢焦点。
     """
-    # MB_TOPMOST 让窗口钉在最上层
-    # MB_SETFOREGROUND 让弹窗抢走当前焦点,立即出现
-    return _MBOX(0, text, title, flags | MB_TOPMOST | MB_SETFOREGROUND)
+    log.info("弹窗: title=%s flags=0x%X body_chars=%d", title, flags, len(text))
+    rc = _MBOX(
+        0,
+        text,
+        title,
+        flags | MB_TOPMOST | MB_SETFOREGROUND | MB_SYSTEMMODAL,
+    )
+    log.info("弹窗返回 rc=%d (1=确定 2=取消 6=是 7=否)", rc)
+    return rc
 
 
 # ---------- 公共 API ----------
@@ -123,8 +136,13 @@ class ConfirmDialog:
         bodies.append("(被关闭的程序中未保存数据可能丢失)")
 
         body = "\n".join(bodies)
-        rc = _mbox(body, strings.APP_TITLE_CONFIRM, MB_OKCANCEL | MB_ICONWARNING)
-        if rc == IDOK:
+        log.info(
+            "ConfirmDialog: 弹窗前; title=%r; body=<<%s>>",
+            strings.APP_TITLE_CONFIRM, body
+        )
+        rc = _mbox(body, strings.APP_TITLE_CONFIRM, MB_YESNO | MB_ICONWARNING)
+        log.info("ConfirmDialog: 弹窗后 rc=%d", rc)
+        if rc == IDYES:
             self.user_choice = "kill"
             return "kill"
         self.user_choice = "cancel"

@@ -8,6 +8,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes as wt
 import logging
+import os
 from typing import NamedTuple
 
 log = logging.getLogger(__name__)
@@ -99,14 +100,39 @@ class Occupier(NamedTuple):
 
 
 def _expand_folder(paths: list[str]) -> list[str]:
-    """如果 path 是文件夹,这里不展开。Restart Manager 对文件夹本身就能匹配。
-    无需 GetChildItem 递归,这里只是简单的存在性检查。
+    """把文件夹展开成具体文件列表(因为 Restart Manager 不支持文件夹路径)。
+
+    策略:
+      - 如果 path 是文件,直接加入
+      - 如果 path 是文件夹,递归找所有文件(最多 1000 个,防爆炸)
+      - 如果路径不存在,跳过
     """
-    return paths
+    expanded: list[str] = []
+    for p in paths:
+        if not os.path.exists(p):
+            continue
+        if os.path.isfile(p):
+            expanded.append(p)
+            continue
+        if os.path.isdir(p):
+            # 文件夹: 递归枚举(限制 1000 个,防止超大文件夹卡死)
+            count = 0
+            for root, dirs, files in os.walk(p):
+                for name in files:
+                    expanded.append(os.path.join(root, name))
+                    count += 1
+                    if count >= 1000:
+                        log.warning(f"文件夹 {p} 文件太多,已截断到 1000 个")
+                        break
+                if count >= 1000:
+                    break
+    return expanded
 
 
 def find_occupiers(paths: list[str]) -> list[Occupier]:
     """查询占用指定文件/文件夹的进程列表。
+
+    注意: Restart Manager 不支持文件夹路径,所以文件夹会被展开成文件列表。
 
     Args:
         paths: 文件或文件夹的绝对路径列表。
@@ -115,6 +141,11 @@ def find_occupiers(paths: list[str]) -> list[Occupier]:
         占用进程列表(可能为空)。出错时返回空列表并写日志。
     """
     if not paths:
+        return []
+
+    # 展开文件夹为文件列表
+    expanded = _expand_folder(paths)
+    if not expanded:
         return []
 
     session_handle = wt.DWORD(0)
@@ -127,9 +158,12 @@ def find_occupiers(paths: list[str]) -> list[Occupier]:
 
     try:
         # 注册被查询的资源(1 个字符串数组)
-        arr = (wt.LPCWSTR * len(paths))(*paths)
+        # 避免空数组 Bug: len(expanded) 为 0 时直接返回
+        if len(expanded) == 0:
+            return []
+        arr = (wt.LPCWSTR * len(expanded))(*expanded)
         rc = _rm.RmRegisterResources(
-            session_handle, len(paths), arr,
+            session_handle, len(expanded), arr,
             0, None,  # 没有进程资源
             0, None,  # 没有服务资源
         )
