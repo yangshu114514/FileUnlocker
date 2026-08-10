@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes
 import logging
 import os
 import subprocess

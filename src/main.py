@@ -19,9 +19,41 @@ from .ui import ConfirmDialog, ResultDialog, ask_yes_no, show_info, show_error
 
 
 # ---------- 日志 ----------
+def _trim_log_file(log_path: Path, max_bytes: int = 512 * 1024) -> None:
+    """如果日志文件超过 max_bytes, 保留最后 max_bytes/2 的内容。
+    防止调试日志随时间无限增长。
+    """
+    try:
+        if not log_path.exists():
+            return
+        size = log_path.stat().st_size
+        if size <= max_bytes:
+            return
+        with open(log_path, "rb") as f:
+            f.seek(max(0, size - max_bytes // 2))
+            tail = f.read()
+        # 从最近的换行处切齐,避免半截 utf-8 字节
+        nl = tail.find(b"\n")
+        if nl > 0 and nl < len(tail):
+            tail = tail[nl+1:]
+        with open(log_path, "wb") as f:
+            f.write(tail)
+        # 旧版残留也顺带清理(%TEMP% 下 FileUnlocker_*_debug.log 上次 1.0 留下的)
+        for old in log_path.parent.glob("FileUnlocker_*_debug.log"):
+            if old != log_path and old.name != log_path.name:
+                try:
+                    if old.stat().st_size > max_bytes:
+                        old.unlink(missing_ok=True)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
 def _setup_logging() -> logging.Logger:
     log_path = Path(tempfile.gettempdir()) / strings.DEBUG_LOG_NAME
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    _trim_log_file(log_path)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -90,7 +122,10 @@ def run_unlock(targets: list[str]) -> int:
         show_info(strings.MSG_CRITICAL_PROTECTED.format(procs=crit_names))
 
     # 用户确认
+    logger.info("即将显示确认弹窗: blocked=%d procs=%d 用户将选择 确定/取消",
+                len(targets), len(proc_list))
     confirm = ConfirmDialog(blocked_paths=targets, occupiers=proc_list).run()
+    logger.info("用户选择: %s", confirm)
     if confirm != "kill":
         logger.info("用户取消")
         return 0
@@ -107,24 +142,9 @@ def run_unlock(targets: list[str]) -> int:
     except Exception as e:
         logger.warning("二次扫描异常,继续走原列表: %s", e)
 
-    # 先尝试 Restart Manager 的"温柔关闭"
-    try:
-        if shutdown_occupiers(targets):
-            logger.info("RmShutdown 至少关闭了一部分进程")
-            # 给进程 1 秒反应时间,然后再扫一次
-            import time
-            time.sleep(1.0)
-            occupiers2 = find_occupiers(targets)
-            still_alive_pids = {o.pid for o in occupiers2 if o.pid != my_pid}
-            proc_list = [p for p in proc_list if p["pid"] in still_alive_pids]
-    except Exception as e:
-        logger.warning("RmShutdown 异常: %s", e)
-
-    if not proc_list:
-        show_info(strings.MSG_KILL_OK.format(n=len(occupiers)))
-        return 0
-
-    # 三层兜底强杀
+    # 三层兜底强杀(taskkill → UAC → SYSTEM)
+    # 不再用 RmShutdown "温柔关闭" — 它在 ConfirmDialog 之后跑会双倍杀,
+    # 而且它是异步的,可能让"成功"提示在确认弹窗之前先弹出来。
     ok_count = 0
     fail_detail: list[str] = []
     success_levels: dict[str, int] = {"normal": 0, "admin": 0, "system": 0}
