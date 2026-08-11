@@ -21,6 +21,9 @@ from typing import Tuple
 
 log = logging.getLogger(__name__)
 
+# subprocess 调用时不弹 cmd 黑框
+_CREATE_NO_WINDOW = 0x08000000
+
 
 # ---------- 第一级: 普通 taskkill ----------
 def taskkill(pid: int, tree: bool = False) -> Tuple[bool, str]:
@@ -43,6 +46,7 @@ def taskkill(pid: int, tree: bool = False) -> Tuple[bool, str]:
                 args,
                 capture_output=True, text=True,
                 timeout=10, encoding=attempt, errors="replace",
+                creationflags=_CREATE_NO_WINDOW,
             )
             break
         except Exception:
@@ -151,6 +155,7 @@ def system_kill(pid: int, tree: bool = False) -> Tuple[bool, str]:
         r1 = subprocess.run(
             create_cmd, capture_output=True, text=True,
             timeout=15, encoding="utf-8", errors="replace",
+            creationflags=_CREATE_NO_WINDOW,
         )
         if r1.returncode != 0:
             return False, f"创建 SYSTEM 计划任务失败: {r1.stderr.strip()}"
@@ -159,6 +164,7 @@ def system_kill(pid: int, tree: bool = False) -> Tuple[bool, str]:
         r2 = subprocess.run(
             run_cmd, capture_output=True, text=True,
             timeout=15, encoding="utf-8", errors="replace",
+            creationflags=_CREATE_NO_WINDOW,
         )
         # 等待真正执行完(异步)
         time.sleep(1.0)
@@ -168,6 +174,7 @@ def system_kill(pid: int, tree: bool = False) -> Tuple[bool, str]:
             ["tasklist", "/FI", f"PID eq {pid}"],
             capture_output=True, text=True, timeout=10,
             encoding="utf-8", errors="replace",
+            creationflags=_CREATE_NO_WINDOW,
         )
         still_alive = str(pid) in check.stdout and "No tasks" not in check.stdout
         if still_alive:
@@ -184,6 +191,7 @@ def system_kill(pid: int, tree: bool = False) -> Tuple[bool, str]:
                 ["schtasks", "/Delete", "/TN", task_name, "/F"],
                 capture_output=True, timeout=10,
                 encoding="utf-8", errors="replace",
+                creationflags=_CREATE_NO_WINDOW,
             )
         except Exception:
             pass
@@ -198,6 +206,7 @@ def _pid_exists(pid: int) -> bool:
             timeout=5,
             encoding="mbcs",
             errors="replace",
+            creationflags=_CREATE_NO_WINDOW,
         )
         # 输出第一行是列名 + 空,数据行才有意义
         for line in r.stdout.splitlines():
@@ -243,6 +252,7 @@ def kill_with_fallback(pid: int, tree: bool = False) -> Tuple[bool, str, str]:
                 ["tasklist", "/FI", f"PID eq {pid}"],
                 capture_output=True, text=True, timeout=10,
                 encoding="utf-8", errors="replace",
+                creationflags=_CREATE_NO_WINDOW,
             )
             if str(pid) not in check.stdout or "No tasks" in check.stdout:
                 return True, "admin", "管理员 taskkill 完成"
