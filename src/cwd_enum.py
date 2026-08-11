@@ -27,6 +27,7 @@ import ctypes
 import ctypes.wintypes as wt
 import logging
 import os
+import sys
 from typing import NamedTuple
 
 log = logging.getLogger(__name__)
@@ -221,6 +222,18 @@ def find_cwd_holders(targets: list[str]) -> list[CwdHolder]:
     if not norm_parents:
         return []
 
+    # 排除"自己". FileUnlocker 套用 cwd 时也继承资源管理器的 cwd,
+    # 若不跳过自己, 我们自己会出现在占用列表里 → 把自己杀了,
+    # 结果后续的"完成"弹窗出不来(整个程序中途退出)
+    #
+    # 排除策略:
+    #   1. pid == 自己 pid
+    #   2. exe_path == sys.executable 或 PyInstaller 打包后的 exe 路径
+    #      (覆盖单实例队列里并跑的多个 FileUnlocker 实例)
+    mypid = os.getpid()
+    my_exe_lower = (sys.executable or "").lower().replace("/", "\\")
+    # PyInstaller 打包后 sys.executable 是 exe 路径, 源码运行时是 python.exe 路径
+
     results: list[CwdHolder] = []
     seen_pids: set[int] = set()
     pids = _enum_all_pids()
@@ -228,6 +241,8 @@ def find_cwd_holders(targets: list[str]) -> list[CwdHolder]:
 
     for pid in pids:
         if pid == 0 or pid == 4:  # System Idle / System
+            continue
+        if pid == mypid:  # 自己
             continue
         if pid in seen_pids:
             continue
@@ -255,8 +270,13 @@ def find_cwd_holders(targets: list[str]) -> list[CwdHolder]:
                     or norm_cwd.startswith(tgt + "\\")
                 ):
                     if pid not in seen_pids:
-                        seen_pids.add(pid)
+                        # 命中后再过滤"自己"(用 exe_path 判断, 包括 PyInstaller exe)
                         exe_path = _get_exe_path(hproc)
+                        exe_lower = exe_path.lower().replace("/", "\\")
+                        if my_exe_lower and exe_lower == my_exe_lower:
+                            log.debug("跳过自己: pid=%d exe=%s cwd=%s", pid, exe_path, cwd)
+                            break
+                        seen_pids.add(pid)
                         results.append(CwdHolder(pid=pid, cwd=cwd, exe_path=exe_path))
                         log.info("cwd 命中: pid=%d exe=%s cwd=%s", pid, exe_path, cwd)
                     break
