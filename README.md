@@ -2,13 +2,13 @@
 
 > 一键强制解锁被占用的文件/文件夹 — 右键菜单集成,毫秒级检测。
 
-纯 Python + Windows 官方 Restart Manager API。
+纯 Python + Windows 官方 Restart Manager API + PEB cwd 检测。
 响应速度从 v1.0 的 5~15 秒降到**毫秒级**。
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
-![Version](https://img.shields.io/badge/version-2.1-green)
+![Version](https://img.shields.io/badge/version-2.1.0-green)
 
 ---
 
@@ -62,15 +62,42 @@ cd FileUnlocker
 | 特性 | 说明 |
 |------|------|
 | **极速检测** | Restart Manager API(rstrtmgr.dll),毫秒级返回结构化进程列表 |
+| **cwd 占用检测** | 进程把目录当工作目录(cwd)持有时,RM 查不到——用 PEB.CurrentDirectory 读进程内存兜底枚举 (~40ms), 找出"python main.py 位于项目目录"之类的场景 |
 | **三层兜底** | taskkill → UAC 提权 → SCHTASKS+SYSTEM,自动选择合适层级 |
 | **多选合并** | 同时右键多个文件自动合并为一次操作,单实例锁 + 队列 |
 | **文件夹支持** | 自动递归枚举文件夹内所有文件,**不限数量**——分批查询合并,嵌套多深、文件多少都能全部查出,不截断不漏报 |
 | **进程保护** | 内置系统关键进程黑名单(`system`/`svchost`/`explorer`/`dwm` 等),绝不误杀 |
-| **自身保护** | exe 不会把自己列为可杀目标 |
-| **实时验证** | 强杀前再次 RM 检查,避免误杀已被释放的目标 |
+| **自身保护** | exe 通过 PID + exe 路径双重排除,不会把自己列为可杀目标 |
+| **实时验证** | 强杀前再次检查,避免误杀已被释放的目标 |
+| **无黑框闪烁** | 所有 subprocess 调用加 CREATE_NO_WINDOW,调用 taskkill/schtasks 不会弹出黑色 cmd 窗口 |
 | **日志自动滚动** | 超过 512KB 自动截断,只留最近一半 |
 | **干净卸载** | 注册表 + 文件 + 控制面板入口三点全清 |
 | **旧版兼容** | 安装时自动清理 v1.0 在 HKLM 里的旧右键菜单 |
+
+## 三层检测架构(v2.1)
+
+```
+目标路径
+  ↓
+[第一层] Restart Manager (毫秒级)
+  ↓ 适用: 被打开的文件句柄占用(文件/文件夹均可)
+  ↓ 查到 → 直接列进程
+未查到且目标是文件夹 → 进第二层
+  ↓
+[第二层] MoveFile 试探(微秒级)
+  ↓ 若改名成功 → 目录未被持 cwd,安全返回"未占用"
+  ↓ 若失败 → 目录被持 cwd,进第三层
+  ↓
+[第三层] PEB cwd 枚举(~40ms)
+  ↓ 枚举全部进程,读 PEB.CurrentDirectory
+  ↓ 匹配目标路径父子关系 → 命中 → 列进程
+```
+
+| 场景 | 检测耗时 |
+|------|------|
+| 文件被打开(Word/Excel) | ~0.01s (RM) |
+| 文件夹未被占用 | ~0.03s (RM + 试探失败) |
+| 文件夹被持 cwd | ~0.04s (RM → 试探失败 → cwd 枚举命中) |
 
 ## 两层架构差别
 
@@ -84,11 +111,12 @@ cd FileUnlocker
 
 ### v2.1 (当前,纯 Python)
 
-- Restart Manager API 直查,毫秒级
+- Restart Manager API 直查(文件占用) + PEB cwd 枚举(目录占用),毫秒级
 - 单一 exe 干所有事(UI/检测/强杀/安装/卸载)
 - 全 UTF-8 + BOM 写法,中文不炸
 - 安装路径在 `%LOCALAPPDATA%` + `HKCU`,**不需要管理员**
-- 完整 tests + 端到端验证通过
+- 完整测试 + 端到端验证通过
+- 所有 subprocess 加 `CREATE_NO_WINDOW` 不弹黑色窗口
 
 > v1.0 完整源码已存档到 [release v1.0-legacy](https://github.com/yangshu114514/FileUnlocker/releases/tag/v1.0-legacy) 供历史参考。
 
@@ -108,10 +136,10 @@ cd FileUnlocker
      2. taskkill + UAC ↑   (管理员)
      3. SCHTASKS + SYSTEM    (最高级)
               ↓
-         解锁完成
+         解锁完成弹窗
 ```
 
-| 方案 | 旧版 (handle.exe) | 新版 (Restart Manager) |
+| 方案 | 旧版 (handle.exe) | 新版 (RM + PEB cwd) |
 |------|---|---|
 | 启动开销 | 1~2.5s 两次 | 0.1s 一次 |
 | 占用检测 | 全系统扫描 2~10s | 毫秒级 |
@@ -127,10 +155,11 @@ FileUnlocker/
 ├─ run.py                  # PyInstaller 打包入口
 ├─ src/
 │  ├─ __init__.py
-│  ├─ main.py              # 主流程: 命令行 → 单实例合并 → 解锁(TODO)
+│  ├─ main.py              # 主流程: 命令行 → 单实例合并 → 解锁
 │  ├─ installer.py         # 安装/卸载(注册表项 + 控制面板入口)
 │  ├─ rm_api.py            # Restart Manager 封装: 文件夹展开 + 分批查询合并
-│  ├─ process_mgr.py       # 三层强杀(taskkill / UAC / SYSTEM)
+│  ├─ cwd_enum.py          # PEB cwd 枚举: 检测进程把目录当 cwd 持有的场景
+│  ├─ process_mgr.py       # 三层强杀(taskkill / UAC / SYSTEM)+ 无黑框 subprocess
 │  ├─ admin.py             # 提权辅助
 │  ├─ single_inst.py       # 单实例锁,多选合并
 │  ├─ critical.py          # 系统关键进程黑名单
@@ -145,7 +174,8 @@ FileUnlocker/
 │
 ├─ .editorconfig           # 强制 UTF-8 with BOM
 ├─ .gitignore              # 排除 dist/build/__pycache__ 等
-└─ .gitattributes          # CRLF/Binary 处理
+├─ .gitattributes          # CRLF/Binary 处理
+└─ LICENSE                  # MIT 协议
 ```
 
 ---
@@ -207,8 +237,8 @@ why:
 
 ## License
 
-MIT
+MIT - 详见 [LICENSE](LICENSE) 文件
 
 Copyright (c) 2026 yangshu114514
 
-v1.0 → v2.1 完整重写,旧版见 [release v1.0-legacy](https://github.com/yangshu114514/FileUnlocker/releases/tag/v1.0-legacy)
+v1.0 → v2.1 完整重写,仅继承"解除文件占用"这一核心理念;旧版见 [release v1.0-legacy](https://github.com/yangshu114514/FileUnlocker/releases/tag/v1.0-legacy)
