@@ -64,7 +64,7 @@ cd FileUnlocker
 | **极速检测** | Restart Manager API(rstrtmgr.dll),毫秒级返回结构化进程列表 |
 | **三层兜底** | taskkill → UAC 提权 → SCHTASKS+SYSTEM,自动选择合适层级 |
 | **多选合并** | 同时右键多个文件自动合并为一次操作,单实例锁 + 队列 |
-| **文件夹支持** | 自动递归枚举文件夹内所有文件(最多 1000 个,防爆炸) |
+| **文件夹支持** | 自动递归枚举文件夹内所有文件,**不限数量**——分批查询合并,嵌套多深、文件多少都能全部查出,不截断不漏报 |
 | **进程保护** | 内置系统关键进程黑名单(`system`/`svchost`/`explorer`/`dwm` 等),绝不误杀 |
 | **自身保护** | exe 不会把自己列为可杀目标 |
 | **实时验证** | 强杀前再次 RM 检查,避免误杀已被释放的目标 |
@@ -97,18 +97,18 @@ cd FileUnlocker
 ## 工作原理
 
 ```
-右键点击 → Restart Manager API 直查
+右键点击 → 文件夹展开成文件列表,分批注册 Restart Manager
               ↓
-       列出占用进程(过滤关键)
+       列出占用进程(跨批合并去重,过滤关键)
               ↓
        MessageBoxW 中文弹窗(YES/NO)
               ↓
-        强杀(分三层)
-    1. taskkill /F        (普通权限)
-    2. taskkill + UAC ↑   (管理员)
-    3. SCHTASKS + SYSTEM    (最高级)
+         强杀(分三层)
+     1. taskkill /F        (普通权限)
+     2. taskkill + UAC ↑   (管理员)
+     3. SCHTASKS + SYSTEM    (最高级)
               ↓
-        解锁完成
+         解锁完成
 ```
 
 | 方案 | 旧版 (handle.exe) | 新版 (Restart Manager) |
@@ -129,7 +129,7 @@ FileUnlocker/
 │  ├─ __init__.py
 │  ├─ main.py              # 主流程: 命令行 → 单实例合并 → 解锁(TODO)
 │  ├─ installer.py         # 安装/卸载(注册表项 + 控制面板入口)
-│  ├─ rm_api.py            # Restart Manager ctypes 封装 + 文件夹展开
+│  ├─ rm_api.py            # Restart Manager 封装: 文件夹展开 + 分批查询合并
 │  ├─ process_mgr.py       # 三层强杀(taskkill / UAC / SYSTEM)
 │  ├─ admin.py             # 提权辅助
 │  ├─ single_inst.py       # 单实例锁,多选合并
