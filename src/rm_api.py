@@ -269,19 +269,20 @@ def find_occupiers(paths: list[str]) -> list[Occupier]:
         log.info("占用查询分 %d 批完成, 共 %d 个占用进程", batch_no, len(all_occupiers))
 
     # 兜底: RM 查不到 且 目标含文件夹 → 目录可能被持作 cwd
-    # 例如 python 以项目目录为 cwd 运行时, RM 查不到但目录实际被锁
+    # 例如 `cd D:\项目A && python main.py` —— python 持有项目目录句柄,
+    # 但 RM 只查被打开的文件根本检测不到。读进程 PEB.CurrentDirectory
+    # ~20ms 搞定 (vs 句柄枚举 ~10秒)。
     if not all_occupiers:
         dirs = [p for p in paths if os.path.isdir(p)]
         if dirs:
-            # 句柄枚举检测(慢, ~5-15秒, 用过即弃)
-            from .handle_enum import find_holders
-            holders = find_holders(dirs)
+            from .cwd_enum import find_cwd_holders
+            holders = find_cwd_holders(dirs)
             seen_holder_pids: set[int] = set()
             for h in holders:
                 if h.pid in seen_holder_pids:
                     continue
                 seen_holder_pids.add(h.pid)
-                # 从 exe 路径提取友好名字(如 python.exe)
+                # 从 exe 路径提取友好名字(如 python.exe, cmd.exe)
                 exe_name = os.path.basename(h.exe_path) if h.exe_path else ""
                 all_occupiers.append(
                     Occupier(
@@ -295,7 +296,7 @@ def find_occupiers(paths: list[str]) -> list[Occupier]:
                     )
                 )
             if holders:
-                log.info("句柄枚举兜底: 发现 %d 个目录持有者", len(seen_holder_pids))
+                log.info("cwd 枚举兜底: 发现 %d 个目录持有者", len(seen_holder_pids))
     return all_occupiers
 
 
