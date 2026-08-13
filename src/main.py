@@ -147,7 +147,7 @@ def run_unlock(targets: list[str]) -> int:
     # 而且它是异步的,可能让"成功"提示在确认弹窗之前先弹出来。
     ok_count = 0
     fail_detail: list[str] = []
-    success_levels: dict[str, int] = {"normal": 0, "admin": 0, "system": 0}
+    success_levels: dict[str, int] = {"normal": 0, "admin": 0, "system": 0, "already_dead": 0}
     for p in proc_list:
         if p["is_critical"]:
             fail_detail.append(f"{p['app_name']}(PID {p['pid']}):系统关键进程,跳过")
